@@ -1,0 +1,74 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Dunkler, nahtloser App-Icon-Hintergrund -->
+    <path
+        android:fillColor="#16161A"
+        android:pathData="M0,0h108v108h-108z"/>
+
+    <!-- MONDSICHEL (Zentriert mit dunkler Outline und Nase) -->
+    <path
+        android:fillColor="#FCE23E"
+        android:strokeColor="#211E1D"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 74,13
+            C 58,11 38,15 26,30
+            C 13,46 11,68 21,85
+            C 29,98 44,103 60,103
+            C 72,103 82,98 88,90
+            C 89.2,88.5 87,88 86,87
+            C 72,83 60,82 50,71
+            C 44,64.5 42,60 45,58
+            C 47.5,56.5 52,57 52.5,54
+            C 53.5,52 49,49.5 47,47
+            C 43,42 45,34 52,26
+            C 59,18 73,14 74,13 Z" />
+
+    <!-- FEINE, DUNKLE KRATER (Weit nach innen verschoben) -->
+    <path android:fillColor="#E1C62A" android:pathData="M39,27 A 3.5,3.5 0 1 1 38.9,27 Z" /> <!-- Top, tiefer -->
+    <path android:fillColor="#E1C62A" android:pathData="M46,23 A 4.0,4.0 0 1 1 45.9,23 Z" /> <!-- Top rechts, nach innen -->
+    <path android:fillColor="#E1C62A" android:pathData="M27,45 A 5.0,5.0 0 1 1 26.9,45 Z" /> <!-- Links oben, nach innen -->
+    <path android:fillColor="#E1C62A" android:pathData="M23,52 A 3.0,3.0 0 1 1 22.9,52 Z" /> <!-- Links Mitte, nach innen -->
+    <path android:fillColor="#E1C62A" android:pathData="M39,84 A 5.5,5.5 0 1 1 38.9,84 Z" /> <!-- Unten links, höher & nach innen -->
+    <path android:fillColor="#E1C62A" android:pathData="M48,86 A 4.0,4.0 0 1 1 47.9,86 Z" /> <!-- Unten rechts, höher & nach innen -->
+
+    <!-- ROSIG-WARME WANGE (Noch ein wenig nach links verschoben) -->
+    <path
+        android:fillColor="#F6B12E"
+        android:pathData="M27,61 C27,58 31,56 33,57 C36,58 37,61 35,63 C33,65 29,63 27,61 Z" />
+
+    <!-- SCHLAFENDES AUGE (Zentriert) -->
+    <path
+        android:strokeColor="#211E1D"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 33,49 C 33,52.5 38.5,52.5 40,46" />
+
+    <!-- ZUFRIEDENER SCHLAFMUND (Noch ein wenig nach links & nach innen) -->
+    <path
+        android:strokeColor="#211E1D"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 37,65 Q 41,69 44,63" />
+
+    <!-- FLIEGENDE SCHLAFSIGNALE: zZz -->
+    <!-- Großes Z -->
+    <path
+        android:fillColor="#211E1D"
+        android:pathData="M 70,22 h 11 v 3 l -8,9 h 8 v 3 h -11 v -3 l 8,-9 h -8 z" />
+    <!-- Mittleres z -->
+    <path
+        android:fillColor="#211E1D"
+        android:pathData="M 63,36 h 8 v 2 l -5,6 h 5 v 2 h -8 v -2 l 5,-6 h -5 z" />
+    <!-- Kleines z -->
+    <path
+        android:fillColor="#574F4A"
+        android:pathData="M 57,49 h 6 v 1.5 l -4,4 h 4 v 1.5 h -6 v -1.5 l 4,-4 h -4 z" />
+</vector>
