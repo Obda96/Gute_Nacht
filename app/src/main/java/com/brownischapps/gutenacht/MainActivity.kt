@@ -3049,6 +3049,26 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Offizielle Versionsanzeige aus dem Android-Paketmanager
+        val versionInfo = remember {
+            try {
+                val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val vName = pInfo.versionName ?: "0.1.0-alpha"
+                val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else @Suppress("DEPRECATION") pInfo.versionCode.toLong()
+                "v$vName (Build $vCode)"
+            } catch (e: Exception) {
+                "v0.1.0-alpha"
+            }
+        }
+
+        Text(
+            text = "Gute Nacht • $versionInfo",
+            color = subTextColor.copy(alpha = 0.6f),
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+        )
     }
 }
