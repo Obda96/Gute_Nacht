@@ -16,6 +16,9 @@ android {
         versionCode = 1
         versionName = "0.1.0-alpha"
 
+        // Benennt die APK-Datei beim Erstellen automatisch um:
+        setProperty("archivesBaseName", "GuteNacht-v$versionName")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
