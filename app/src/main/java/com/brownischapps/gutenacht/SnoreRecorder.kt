@@ -19,8 +19,11 @@ class SnoreRecorder(private val context: Context) {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setAudioEncodingBitRate(128000)
-            setAudioSamplingRate(44100)
+            // Punkt 5: Optimiert für Schnarch- & Sprachfrequenzen (Mono, 16 kHz, 24 kbps)
+            // Spart über 80% Speicherplatz gegenüber 128 kbps / 44.1 kHz bei klarer Erkennbarkeit!
+            setAudioChannels(1)
+            setAudioSamplingRate(16000)
+            setAudioEncodingBitRate(24000)
             setOutputFile(outputFile.absolutePath)
 
             try {
@@ -35,7 +38,7 @@ class SnoreRecorder(private val context: Context) {
     fun getAmplitude(): Int {
         return try {
             mediaRecorder?.maxAmplitude ?: 0
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             0
         }
     }
@@ -46,7 +49,7 @@ class SnoreRecorder(private val context: Context) {
                 stop()
                 release()
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Ignorieren, falls Aufnahme zu kurz war
         } finally {
             mediaRecorder = null

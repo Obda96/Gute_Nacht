@@ -20,7 +20,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,6 +63,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -84,6 +90,9 @@ import kotlin.math.sin
 
 const val GITHUB_REPO_URL = "https://github.com/Obda96/Gute_Nacht"
 const val GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/Obda96/Gute_Nacht/releases/latest"
+
+// Punkt 4: Hier kannst du deinen eigenen Spendenlink eintragen (z.B. https://paypal.me/DeinName oder https://ko-fi.com/DeinName)
+const val DONATION_URL = "https://paypal.me/debrown96"
 
 data class SnoreSession(
     val dir: File,
@@ -142,9 +151,9 @@ suspend fun checkGitHubForUpdate(
                 releaseName = "",
                 downloadUrl = GITHUB_REPO_URL,
                 statusMessage = if (githubToken.isBlank()) {
-                    "Repo ist aktuell privat (404). Für öffentliche Update-Prüfung Repo auf 'Public' stellen oder Token hinterlegen."
+                    "Repo ist privat (404). Bitte Token hinterlegen oder Repo auf 'Public' stellen."
                 } else {
-                    "Noch kein Release gefunden oder Token ohne Lese-Berechtigung."
+                    "Noch kein reguläres Release gefunden (Pre-Release Haken auf GitHub entfernen!)."
                 }
             )
         } else if (code != 200) {
@@ -211,6 +220,9 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("gutenacht_prefs", Context.MODE_PRIVATE)
 
         setContent {
+            // Einmaliger Willkommens-Dialog bei der Ersteinrichtung
+            var showWelcomeDialog by rememberSaveable { mutableStateOf(!prefs.getBoolean("welcome_shown_v1", false)) }
+
             var isDarkMode by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", true)) }
             var isTestMode by rememberSaveable { mutableStateOf(prefs.getBoolean("test_mode", false)) }
 
@@ -246,9 +258,9 @@ class MainActivity : ComponentActivity() {
 
             val currentVersionName = remember {
                 try {
-                    packageManager.getPackageInfo(packageName, 0).versionName ?: "0.2.0-alpha"
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "0.3.0-alpha"
                 } catch (_: Exception) {
-                    "0.2.0-alpha"
+                    "0.3.0-alpha"
                 }
             }
 
@@ -300,6 +312,82 @@ class MainActivity : ComponentActivity() {
                 }
             ) {
                 Surface(modifier = Modifier.fillMaxSize(), color = bgColor) {
+                    if (showWelcomeDialog) {
+                        AlertDialog(
+                            containerColor = cardColor,
+                            titleContentColor = textColor,
+                            textContentColor = subTextColor,
+                            onDismissRequest = {
+                                showWelcomeDialog = false
+                                prefs.edit { putBoolean("welcome_shown_v1", true) }
+                            },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.NightlightRound,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFFCA28),
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = {
+                                Text(
+                                    text = "Willkommen bei Gute Nacht! 🌙",
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+                            },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(
+                                        text = "Schön, dass du dabei bist! Gute Nacht ist ein echtes 1-Mann-Herzensprojekt.",
+                                        color = textColor,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        text = "Mir ist wichtig: Diese App ist und bleibt komplett kostenlos, werbefrei und speichert alle deine Aufnahmen ausschließlich lokal auf deinem Gerät.",
+                                        color = subTextColor,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        text = "Wenn dir die App gefällt und dir im Alltag weiterhilft, freue ich mich riesig über einen kleinen Kaffee zur Unterstützung der weiteren Entwicklung. Den Kaffee-Button findest du übrigens jederzeit ganz unten in den Einstellungen. ☕",
+                                        color = subTextColor,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showWelcomeDialog = false
+                                        prefs.edit { putBoolean("welcome_shown_v1", true) }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4FC3F7))
+                                ) {
+                                    Text("Los geht's!", color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            dismissButton = {
+                                OutlinedButton(
+                                    onClick = {
+                                        showWelcomeDialog = false
+                                        prefs.edit { putBoolean("welcome_shown_v1", true) }
+                                        val intent = Intent(Intent.ACTION_VIEW, DONATION_URL.toUri())
+                                        startActivity(intent)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Default.Favorite, contentDescription = null, tint = Color(0xFFFFB74D))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Direkt einen Kaffee spendieren ☕", color = Color(0xFFFFB74D))
+                                }
+                            }
+                        )
+                    }
+
                     MainScreen(
                         isDarkMode = isDarkMode,
                         onDarkModeChange = {
@@ -412,6 +500,7 @@ class MainActivity : ComponentActivity() {
                         onDeleteSession = { session -> deleteSession(session) },
                         onDeleteSingleEvent = { eventFile -> deleteSingleEventFile(eventFile) },
                         onDeleteAllSessions = { includeArchive -> deleteAllSessions(includeArchive) },
+                        onOptimizeStorage = { optimizeExistingStorage() },
                         getStorageSizeMb = { calculateStorageSizeMb() },
                         onExportMp3 = { eventItem -> exportEventAsMp3(eventItem) }
                     )
@@ -472,11 +561,6 @@ class MainActivity : ComponentActivity() {
                 if (eventFiles.isEmpty() && !hasChartData) {
                     dir.deleteRecursively()
                     continue
-                }
-
-                val combinedFile = File(dir, "combined.m4a")
-                if (eventFiles.isNotEmpty() && !combinedFile.exists()) {
-                    SnoreRecordService.mergeAudioFiles(eventFiles, combinedFile)
                 }
 
                 val parts = dir.name.split("_")
@@ -610,6 +694,29 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
     }
 
+    /**
+     * Punkt 5: Entfernt aus bestehenden Aufnahmen die doppelten "combined.m4a"-Dateien,
+     * während alle Einzelspuren und Diagramme vollständig erhalten bleiben.
+     */
+    private fun optimizeExistingStorage() {
+        val root = getExternalFilesDir(null) ?: return
+        var freedBytes = 0L
+        root.walkTopDown().filter { it.isFile && (it.name == "combined.m4a" || it.name == "temp_listen.m4a") }.forEach { file ->
+            freedBytes += file.length()
+            file.delete()
+        }
+        val freedMb = freedBytes.toDouble() / (1024.0 * 1024.0)
+        if (freedBytes > 0L) {
+            Toast.makeText(
+                this,
+                String.format(Locale.GERMAN, "Speicher optimiert: %.1f MB doppelte Audiodaten freigegeben!", freedMb),
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            Toast.makeText(this, "Speicher ist bereits optimal bereinigt!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun calculateStorageSizeMb(): String {
         val root = getExternalFilesDir(null) ?: return "0,0 MB"
         val totalBytes = root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
@@ -722,6 +829,7 @@ fun MainScreen(
     onDeleteSession: (SnoreSession) -> Unit,
     onDeleteSingleEvent: (File) -> Unit,
     onDeleteAllSessions: (Boolean) -> Unit,
+    onOptimizeStorage: () -> Unit,
     getStorageSizeMb: () -> String,
     onExportMp3: (SnoreEventItem) -> Unit
 ) {
@@ -779,6 +887,21 @@ fun MainScreen(
 
     var selectedSession by remember { mutableStateOf<SnoreSession?>(null) }
     var sessions by remember { mutableStateOf(loadSessions()) }
+    var storageTextState by remember { mutableStateOf(getStorageSizeMb()) }
+
+    // Punkt 3: Globale Zurück-Geste des Handys abfangen!
+    // - In Detailansicht -> zurück zur Ereignisliste
+    // - In Ereignisse oder Einstellungen -> zurück zur Startseite ("record")
+    // - Auf der Startseite ("record") -> nichts tun (App schließt/minimiert sich nicht versehentlich!)
+    BackHandler(enabled = true) {
+        when {
+            selectedSession != null -> selectedSession = null
+            currentTab != "record" -> currentTab = "record"
+            else -> {
+                // Auf der Startseite passiert beim Wischen/Zurück-Drücken absichtlich nichts
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         var wasBusyBefore = SnoreRecordService.isRunning || SnoreRecordService.isSavingSession
@@ -795,6 +918,7 @@ fun MainScreen(
 
             if (wasBusyBefore && !currentlyBusy) {
                 sessions = withContext(Dispatchers.IO) { loadSessions() }
+                storageTextState = getStorageSizeMb()
             }
             wasBusyBefore = currentlyBusy
             delay(250)
@@ -858,6 +982,7 @@ fun MainScreen(
                     selected = currentTab == "events",
                     onClick = {
                         sessions = loadSessions()
+                        storageTextState = getStorageSizeMb()
                         selectedSession = null
                         currentTab = "events"
                     },
@@ -883,7 +1008,11 @@ fun MainScreen(
                     },
                     label = { Text("Einstellung") },
                     selected = currentTab == "settings",
-                    onClick = { selectedSession = null; currentTab = "settings" },
+                    onClick = {
+                        storageTextState = getStorageSizeMb()
+                        selectedSession = null
+                        currentTab = "settings"
+                    },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = Color(0xFF4FC3F7),
                         selectedTextColor = Color(0xFF4FC3F7),
@@ -935,11 +1064,13 @@ fun MainScreen(
                             onDeleteConfirmed = {
                                 onDeleteSession(currentUpdated)
                                 sessions = loadSessions()
+                                storageTextState = getStorageSizeMb()
                                 selectedSession = null
                             },
                             onDeleteSingleEvent = { file ->
                                 onDeleteSingleEvent(file)
                                 sessions = loadSessions()
+                                storageTextState = getStorageSizeMb()
                                 selectedSession = sessions.find { it.dir.absolutePath == currentUpdated.dir.absolutePath }
                             },
                             onExportMp3 = onExportMp3
@@ -961,6 +1092,7 @@ fun MainScreen(
                             onDeleteConfirmed = { session ->
                                 onDeleteSession(session)
                                 sessions = loadSessions()
+                                storageTextState = getStorageSizeMb()
                             }
                         )
                     }
@@ -1006,11 +1138,17 @@ fun MainScreen(
                     latestDownloadUrl = latestDownloadUrl,
                     isCheckingUpdate = isCheckingUpdate,
                     onCheckUpdateNow = onCheckUpdateNow,
-                    storageUsedText = getStorageSizeMb(),
+                    storageUsedText = storageTextState,
                     archivedCount = sessions.count { it.isArchived },
+                    onOptimizeStorage = {
+                        onOptimizeStorage()
+                        sessions = loadSessions()
+                        storageTextState = getStorageSizeMb()
+                    },
                     onDeleteAllSessions = { includeArchive ->
                         onDeleteAllSessions(includeArchive)
                         sessions = loadSessions()
+                        storageTextState = getStorageSizeMb()
                     },
                     textColor = textColor,
                     subTextColor = subTextColor,
@@ -1080,7 +1218,7 @@ fun StartRecordScreen(
                 CircularProgressIndicator(color = Color(0xFF4FC3F7), modifier = Modifier.size(64.dp))
                 Spacer(modifier = Modifier.height(16.dp))
                 Text("Aufnahme wird gespeichert...", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = textColor)
-                Text("Audiospuren werden im Hintergrund zusammengefügt", fontSize = 13.sp, color = subTextColor, modifier = Modifier.padding(top = 6.dp))
+                Text("Daten werden abgeschlossen", fontSize = 13.sp, color = subTextColor, modifier = Modifier.padding(top = 6.dp))
             } else if (!isRecording) {
                 TiredSunIllustration(modifier = Modifier.size(120.dp))
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1827,7 +1965,7 @@ fun MiniAudioSparkline(points: List<Int>) {
 }
 
 // ==========================================
-// DETAILANSICHT
+// DETAILANSICHT (Punkt 1: Hauptdiagramm blendet bei "Einzelne Spuren" nach oben aus!)
 // ==========================================
 
 fun calculateSessionTimeLabels(startTimeStr: String, endTimeStr: String, totalSecs: Int): List<String> {
@@ -1914,7 +2052,65 @@ fun SessionDetailScreen(
     var totalDurationMs by remember { mutableIntStateOf(1) }
 
     var playingSingleEventFile by remember { mutableStateOf<File?>(null) }
-    val audioToPlay = session.combinedAudio ?: session.eventFiles.firstOrNull()
+
+    // Punkt 5: Virtuelle Playlist über alle Einzelspuren, falls keine redundante combined.m4a mehr existiert!
+    var playlistIndex by remember { mutableIntStateOf(0) }
+
+    val eventItems by produceState(initialValue = emptyList(), session.eventFiles) {
+        value = withContext(Dispatchers.IO) {
+            val totalEvents = session.eventFiles.size.coerceAtLeast(1)
+            session.eventFiles.mapIndexed { index, file ->
+                val parts = file.nameWithoutExtension.split("_")
+                val dateStr = parts.getOrNull(2) ?: ""
+                val timeStr = (parts.getOrNull(3) ?: "").replace("-", ":")
+                val dbVal = parts.getOrNull(4)?.removeSuffix("dB")?.toIntOrNull() ?: 50
+
+                val secsFromName = parts.getOrNull(5)?.removeSuffix("s")?.toIntOrNull()
+                // Bei neuen 24kbps-Dateien sind es ca. 3 KB/Sek, bei alten 128kbps ca. 16 KB/Sek
+                val secs = secsFromName ?: ((file.length() / 3200L).toInt()).coerceAtLeast(1)
+                val m = secs / 60
+                val s = secs % 60
+                val durStr = String.format(Locale.getDefault(), "%d:%02d min", m, s)
+
+                val barsFile = File(file.parentFile, "${file.nameWithoutExtension}.bars")
+                val barPoints = if (barsFile.exists()) {
+                    barsFile.readText().split(",").mapNotNull { it.trim().toIntOrNull() }
+                } else {
+                    val barCount = (secs * 5).coerceIn(15, 120)
+                    val sessionPts = session.chartPoints
+                    if (sessionPts.size > barCount) {
+                        val startIdx = ((index.toFloat() / totalEvents.toFloat()) * (sessionPts.size - barCount)).toInt().coerceAtLeast(0)
+                        sessionPts.subList(startIdx, (startIdx + barCount).coerceAtMost(sessionPts.size))
+                    } else {
+                        List(barCount) { idx ->
+                            val wave = sin(idx * 0.45).toFloat()
+                            (dbVal - 10 + (wave * 10).toInt()).coerceIn(30, 85)
+                        }
+                    }
+                }
+
+                SnoreEventItem(
+                    file = file,
+                    dateStr = dateStr,
+                    timeStr = timeStr,
+                    db = dbVal,
+                    durationSecs = secs,
+                    durationStr = durStr,
+                    chartPoints = barPoints.ifEmpty { listOf(dbVal) }
+                )
+            }
+        }
+    }
+
+    val totalVirtualDurationMs = remember(eventItems, session.combinedAudio) {
+        if (session.combinedAudio != null && session.combinedAudio.exists()) {
+            0 // Wird vom MediaPlayer geladen
+        } else {
+            (eventItems.sumOf { it.durationSecs } * 1000).coerceAtLeast(1000)
+        }
+    }
+
+    val hasAnyPlayableAudio = (session.combinedAudio != null && session.combinedAudio.exists()) || session.eventFiles.isNotEmpty()
 
     DisposableEffect(Unit) {
         onDispose {
@@ -1927,72 +2123,132 @@ fun SessionDetailScreen(
         }
     }
 
-    LaunchedEffect(audioToPlay?.absolutePath) {
-        if (playingSingleEventFile == null && !isPlaying && audioToPlay != null && audioToPlay.exists()) {
-            try {
-                mediaPlayer.reset()
-                mediaPlayer.setDataSource(audioToPlay.absolutePath)
-                mediaPlayer.prepare()
-                totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
-                isPrepared = true
-                mediaPlayer.setOnCompletionListener {
+    fun startPlaylistTrackAt(index: Int, seekInsideMs: Int = 0, autoStart: Boolean = true) {
+        if (eventItems.isEmpty()) return
+        val safeIdx = index.coerceIn(0, eventItems.lastIndex)
+        val targetFile = eventItems[safeIdx].file
+        if (!targetFile.exists()) return
+        try {
+            playlistIndex = safeIdx
+            playingSingleEventFile = null
+            mediaPlayer.reset()
+            mediaPlayer.setDataSource(targetFile.absolutePath)
+            mediaPlayer.prepare()
+            totalDurationMs = totalVirtualDurationMs.coerceAtLeast(1)
+            isPrepared = true
+            if (seekInsideMs > 0) {
+                mediaPlayer.seekTo(seekInsideMs.coerceAtMost(mediaPlayer.duration))
+            }
+            mediaPlayer.setOnCompletionListener {
+                if (playlistIndex + 1 < eventItems.size) {
+                    startPlaylistTrackAt(playlistIndex + 1, 0, true)
+                } else {
                     isPlaying = false
                     currentPosMs = 0
-                    playingSingleEventFile = null
+                    playlistIndex = 0
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
-        }
-    }
-
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            currentPosMs = try { mediaPlayer.currentPosition } catch (_: Exception) { 0 }
-            delay(50)
-        }
-    }
-
-    fun prepareAndAttachCompletionListener(file: File): Boolean {
-        if (!file.exists()) return false
-        return try {
-            mediaPlayer.reset()
-            mediaPlayer.setDataSource(file.absolutePath)
-            mediaPlayer.prepare()
-            totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
-            isPrepared = true
-            mediaPlayer.setOnCompletionListener {
-                isPlaying = false
-                currentPosMs = 0
-                playingSingleEventFile = null
-            }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    fun playOrSeekCombined(targetFraction: Float? = null) {
-        val mainAudio = session.combinedAudio ?: session.eventFiles.firstOrNull() ?: return
-        if (!mainAudio.exists()) return
-        try {
-            if (playingSingleEventFile != null || !isPrepared) {
-                if (!prepareAndAttachCompletionListener(mainAudio)) return
-                playingSingleEventFile = null
-            }
-
-            if (targetFraction != null) {
-                val targetMs = (targetFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
-                mediaPlayer.seekTo(targetMs)
-                currentPosMs = targetMs
-            }
-            if (!mediaPlayer.isPlaying) {
+            if (autoStart) {
                 mediaPlayer.start()
                 isPlaying = true
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    LaunchedEffect(session.combinedAudio?.absolutePath, eventItems.size) {
+        if (playingSingleEventFile == null && !isPlaying) {
+            val combined = session.combinedAudio
+            if (combined != null && combined.exists()) {
+                try {
+                    mediaPlayer.reset()
+                    mediaPlayer.setDataSource(combined.absolutePath)
+                    mediaPlayer.prepare()
+                    totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
+                    isPrepared = true
+                    mediaPlayer.setOnCompletionListener {
+                        isPlaying = false
+                        currentPosMs = 0
+                        playingSingleEventFile = null
+                    }
+                } catch (_: Exception) {}
+            } else if (eventItems.isNotEmpty()) {
+                totalDurationMs = totalVirtualDurationMs.coerceAtLeast(1)
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying, playingSingleEventFile, playlistIndex, eventItems) {
+        while (isPlaying) {
+            val posInFile = try { mediaPlayer.currentPosition } catch (_: Exception) { 0 }
+            currentPosMs = if (playingSingleEventFile == null && (session.combinedAudio == null || !session.combinedAudio.exists()) && eventItems.isNotEmpty()) {
+                val previousSecs = eventItems.take(playlistIndex).sumOf { it.durationSecs }
+                (previousSecs * 1000) + posInFile
+            } else {
+                posInFile
+            }
+            delay(50)
+        }
+    }
+
+    fun playOrSeekCombined(targetFraction: Float? = null) {
+        val combined = session.combinedAudio
+        if (combined != null && combined.exists()) {
+            try {
+                if (playingSingleEventFile != null || !isPrepared) {
+                    mediaPlayer.reset()
+                    mediaPlayer.setDataSource(combined.absolutePath)
+                    mediaPlayer.prepare()
+                    totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
+                    isPrepared = true
+                    playingSingleEventFile = null
+                    mediaPlayer.setOnCompletionListener {
+                        isPlaying = false
+                        currentPosMs = 0
+                        playingSingleEventFile = null
+                    }
+                }
+                if (targetFraction != null) {
+                    val targetMs = (targetFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
+                    mediaPlayer.seekTo(targetMs)
+                    currentPosMs = targetMs
+                }
+                if (!mediaPlayer.isPlaying) {
+                    mediaPlayer.start()
+                    isPlaying = true
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        } else if (eventItems.isNotEmpty()) {
+            // Virtuelle Playlist über alle Einzelspuren abspielen
+            val totalMs = totalVirtualDurationMs.coerceAtLeast(1)
+            totalDurationMs = totalMs
+            if (targetFraction != null) {
+                val targetGlobalMs = (targetFraction.coerceIn(0f, 1f) * totalMs).toInt()
+                var accMs = 0
+                var chosenIdx = 0
+                var offsetInsideMs = 0
+                for (i in eventItems.indices) {
+                    val itemMs = (eventItems[i].durationSecs * 1000).coerceAtLeast(1000)
+                    if (targetGlobalMs <= accMs + itemMs || i == eventItems.lastIndex) {
+                        chosenIdx = i
+                        offsetInsideMs = (targetGlobalMs - accMs).coerceAtLeast(0)
+                        break
+                    }
+                    accMs += itemMs
+                }
+                currentPosMs = targetGlobalMs
+                startPlaylistTrackAt(chosenIdx, offsetInsideMs, autoStart = true)
+            } else {
+                if (playingSingleEventFile != null || !isPrepared) {
+                    startPlaylistTrackAt(0, 0, autoStart = true)
+                } else if (!mediaPlayer.isPlaying) {
+                    mediaPlayer.start()
+                    isPlaying = true
+                }
+            }
         }
     }
 
@@ -2016,8 +2272,17 @@ fun SessionDetailScreen(
                     isPlaying = true
                 }
             } else {
-                if (!prepareAndAttachCompletionListener(file)) return
+                mediaPlayer.reset()
+                mediaPlayer.setDataSource(file.absolutePath)
+                mediaPlayer.prepare()
+                totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
+                isPrepared = true
                 playingSingleEventFile = file
+                mediaPlayer.setOnCompletionListener {
+                    isPlaying = false
+                    currentPosMs = 0
+                    playingSingleEventFile = null
+                }
                 if (seekFraction != null) {
                     val targetMs = (seekFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
                     mediaPlayer.seekTo(targetMs)
@@ -2127,51 +2392,6 @@ fun SessionDetailScreen(
         return String.format(Locale.getDefault(), "%02d:%02d", m, s)
     }
 
-    val eventItems by produceState(initialValue = emptyList(), session.eventFiles) {
-        value = withContext(Dispatchers.IO) {
-            val totalEvents = session.eventFiles.size.coerceAtLeast(1)
-            session.eventFiles.mapIndexed { index, file ->
-                val parts = file.nameWithoutExtension.split("_")
-                val dateStr = parts.getOrNull(2) ?: ""
-                val timeStr = (parts.getOrNull(3) ?: "").replace("-", ":")
-                val dbVal = parts.getOrNull(4)?.removeSuffix("dB")?.toIntOrNull() ?: 50
-
-                val secsFromName = parts.getOrNull(5)?.removeSuffix("s")?.toIntOrNull()
-                val secs = secsFromName ?: ((file.length() / 16000L).toInt()).coerceAtLeast(1)
-                val m = secs / 60
-                val s = secs % 60
-                val durStr = String.format(Locale.getDefault(), "%d:%02d min", m, s)
-
-                val barsFile = File(file.parentFile, "${file.nameWithoutExtension}.bars")
-                val barPoints = if (barsFile.exists()) {
-                    barsFile.readText().split(",").mapNotNull { it.trim().toIntOrNull() }
-                } else {
-                    val barCount = (secs * 5).coerceIn(15, 120)
-                    val sessionPts = session.chartPoints
-                    if (sessionPts.size > barCount) {
-                        val startIdx = ((index.toFloat() / totalEvents.toFloat()) * (sessionPts.size - barCount)).toInt().coerceAtLeast(0)
-                        sessionPts.subList(startIdx, (startIdx + barCount).coerceAtMost(sessionPts.size))
-                    } else {
-                        List(barCount) { idx ->
-                            val wave = sin(idx * 0.45).toFloat()
-                            (dbVal - 10 + (wave * 10).toInt()).coerceIn(30, 85)
-                        }
-                    }
-                }
-
-                SnoreEventItem(
-                    file = file,
-                    dateStr = dateStr,
-                    timeStr = timeStr,
-                    db = dbVal,
-                    durationSecs = secs,
-                    durationStr = durStr,
-                    chartPoints = barPoints.ifEmpty { listOf(dbVal) }
-                )
-            }
-        }
-    }
-
     val sortedEventItems = remember(eventItems, trackSortOrder) {
         when (trackSortOrder) {
             "loudest" -> eventItems.sortedByDescending { it.db }
@@ -2208,7 +2428,7 @@ fun SessionDetailScreen(
                     val frac = (currentPosMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
                     "Position: ${calculateTimeAtFraction(session.startTimeStr, session.endTimeStr, session.totalSecs, frac)}"
                 } else {
-                    "Auflösung: 0,2 Sek./Balken"
+                    "${session.startTimeStr} – ${session.endTimeStr} Uhr"
                 }
                 Text(
                     text = activeCursorInfo,
@@ -2230,163 +2450,176 @@ fun SessionDetailScreen(
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // Punkt 1: Hauptdiagramm, Legende und Gesamt-Player gleiten sanft nach oben weg,
+        // sobald man auf "Einzelne Spuren" wechselt!
+        AnimatedVisibility(
+            visible = activeSubTab == "overview",
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
         ) {
-            timeAxisLabels.forEachIndexed { index, label ->
-                val isEdge = index == 0 || index == timeAxisLabels.lastIndex
-                Text(
-                    text = label,
-                    color = if (isEdge) textColor else subTextColor,
-                    fontSize = if (isEdge) 14.sp else 12.sp,
-                    fontWeight = if (isEdge) FontWeight.Bold else FontWeight.Medium
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(165.dp)
-                .pointerInput(session.dir.absolutePath) {
-                    detectTapGestures { offset ->
-                        val frac = (offset.x / size.width).coerceIn(0f, 1f)
-                        playOrSeekCombined(frac)
-                    }
-                }
-                .pointerInput(session.dir.absolutePath) {
-                    detectHorizontalDragGestures { change, _ ->
-                        change.consume()
-                        val frac = (change.position.x / size.width).coerceIn(0f, 1f)
-                        playOrSeekCombined(frac)
-                    }
-                }
-        ) {
-            val rawPoints = session.chartPoints
-
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                for (i in 1..3) {
-                    val y = size.height * (i / 4f)
-                    drawLine(
-                        color = subTextColor.copy(alpha = 0.18f),
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = 1.5f
-                    )
-                }
-
-                for (i in 1..3) {
-                    val x = size.width * (i / 4f)
-                    drawLine(
-                        color = subTextColor.copy(alpha = 0.22f),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = 1.5f
-                    )
-                }
-
-                val baseH = size.height * 0.12f
-                drawRect(
-                    color = Color(0xFF37474F).copy(alpha = 0.6f),
-                    topLeft = Offset(0f, size.height - baseH),
-                    size = Size(size.width, baseH)
-                )
-
-                val maxPossibleBars = (size.width / 1.5f).toInt().coerceAtLeast(100)
-                val points = prepareChartBarsForCanvas(rawPoints, maxPossibleBars)
-                val maxVal = (points.maxOrNull() ?: 80).coerceAtLeast(60).toFloat()
-
-                val barW = size.width / points.size.coerceAtLeast(1)
-                val drawnBarW = (barW * 0.82f).coerceAtLeast(0.6f)
-
-                points.forEachIndexed { idx, db ->
-                    val ratio = (db / maxVal).coerceIn(0.06f, 1f)
-                    val barH = ratio * size.height
-                    val barColor = when {
-                        db < 45 -> Color(0xFF37474F)
-                        db < 58 -> Color(0xFF4DB6AC)
-                        db < 70 -> Color(0xFFFFB74D)
-                        else -> Color(0xFFE57373)
-                    }
-                    drawRect(
-                        color = barColor,
-                        topLeft = Offset(idx * barW, size.height - barH),
-                        size = Size(drawnBarW, barH)
-                    )
-                }
-
-                if (playingSingleEventFile == null && (isPlaying || currentPosMs > 0)) {
-                    val progress = (currentPosMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
-                    val x = progress * size.width
-                    drawLine(
-                        color = Color(0xFF4FC3F7),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = 4f
-                    )
-                    drawCircle(
-                        color = Color(0xFF4FC3F7),
-                        radius = 10f,
-                        center = Offset(x, 10f)
-                    )
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            LegendBadge(color = Color(0xFF37474F), label = "Leise", textColor = textColor)
-            LegendBadge(color = Color(0xFF4DB6AC), label = "Leicht", textColor = textColor)
-            LegendBadge(color = Color(0xFFFFB74D), label = "Laut", textColor = textColor)
-            LegendBadge(color = Color(0xFFE57373), label = "Stark", textColor = textColor)
-        }
-
-        if (audioToPlay != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
-                colors = CardDefaults.cardColors(containerColor = cardColor),
-                shape = RoundedCornerShape(16.dp)
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = {
-                        if (isPlaying && playingSingleEventFile == null) {
-                            mediaPlayer.pause()
-                            isPlaying = false
-                        } else {
-                            playOrSeekCombined()
-                        }
-                    }) {
-                        Icon(
-                            imageVector = if (isPlaying && playingSingleEventFile == null) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Abspielen",
-                            tint = Color(0xFF4FC3F7)
+                    timeAxisLabels.forEachIndexed { index, label ->
+                        val isEdge = index == 0 || index == timeAxisLabels.lastIndex
+                        Text(
+                            text = label,
+                            color = if (isEdge) textColor else subTextColor,
+                            fontSize = if (isEdge) 14.sp else 12.sp,
+                            fontWeight = if (isEdge) FontWeight.Bold else FontWeight.Medium
                         )
                     }
+                }
 
-                    Text(formatMsTime(if (playingSingleEventFile == null) currentPosMs else 0), color = subTextColor, fontSize = 12.sp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(165.dp)
+                        .pointerInput(session.dir.absolutePath, eventItems.size) {
+                            detectTapGestures { offset ->
+                                val frac = (offset.x / size.width).coerceIn(0f, 1f)
+                                playOrSeekCombined(frac)
+                            }
+                        }
+                        .pointerInput(session.dir.absolutePath, eventItems.size) {
+                            detectHorizontalDragGestures { change, _ ->
+                                change.consume()
+                                val frac = (change.position.x / size.width).coerceIn(0f, 1f)
+                                playOrSeekCombined(frac)
+                            }
+                        }
+                ) {
+                    val rawPoints = session.chartPoints
 
-                    Slider(
-                        value = if (playingSingleEventFile == null) (currentPosMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f) else 0f,
-                        onValueChange = { frac -> playOrSeekCombined(frac) },
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFF4FC3F7), activeTrackColor = Color(0xFF4FC3F7))
-                    )
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        for (i in 1..3) {
+                            val y = size.height * (i / 4f)
+                            drawLine(
+                                color = subTextColor.copy(alpha = 0.18f),
+                                start = Offset(0f, y),
+                                end = Offset(size.width, y),
+                                strokeWidth = 1.5f
+                            )
+                        }
 
-                    Text(formatMsTime(if (playingSingleEventFile == null) totalDurationMs else 0), color = subTextColor, fontSize = 12.sp)
+                        for (i in 1..3) {
+                            val x = size.width * (i / 4f)
+                            drawLine(
+                                color = subTextColor.copy(alpha = 0.22f),
+                                start = Offset(x, 0f),
+                                end = Offset(x, size.height),
+                                strokeWidth = 1.5f
+                            )
+                        }
+
+                        val baseH = size.height * 0.12f
+                        drawRect(
+                            color = Color(0xFF37474F).copy(alpha = 0.6f),
+                            topLeft = Offset(0f, size.height - baseH),
+                            size = Size(size.width, baseH)
+                        )
+
+                        val maxPossibleBars = (size.width / 1.5f).toInt().coerceAtLeast(100)
+                        val points = prepareChartBarsForCanvas(rawPoints, maxPossibleBars)
+                        val maxVal = (points.maxOrNull() ?: 80).coerceAtLeast(60).toFloat()
+
+                        val barW = size.width / points.size.coerceAtLeast(1)
+                        val drawnBarW = (barW * 0.82f).coerceAtLeast(0.6f)
+
+                        points.forEachIndexed { idx, db ->
+                            val ratio = (db / maxVal).coerceIn(0.06f, 1f)
+                            val barH = ratio * size.height
+                            val barColor = when {
+                                db < 45 -> Color(0xFF37474F)
+                                db < 58 -> Color(0xFF4DB6AC)
+                                db < 70 -> Color(0xFFFFB74D)
+                                else -> Color(0xFFE57373)
+                            }
+                            drawRect(
+                                color = barColor,
+                                topLeft = Offset(idx * barW, size.height - barH),
+                                size = Size(drawnBarW, barH)
+                            )
+                        }
+
+                        if (playingSingleEventFile == null && (isPlaying || currentPosMs > 0)) {
+                            val progress = (currentPosMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+                            val x = progress * size.width
+                            drawLine(
+                                color = Color(0xFF4FC3F7),
+                                start = Offset(x, 0f),
+                                end = Offset(x, size.height),
+                                strokeWidth = 4f
+                            )
+                            drawCircle(
+                                color = Color(0xFF4FC3F7),
+                                radius = 10f,
+                                center = Offset(x, 10f)
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    LegendBadge(color = Color(0xFF37474F), label = "Leise", textColor = textColor)
+                    LegendBadge(color = Color(0xFF4DB6AC), label = "Leicht", textColor = textColor)
+                    LegendBadge(color = Color(0xFFFFB74D), label = "Laut", textColor = textColor)
+                    LegendBadge(color = Color(0xFFE57373), label = "Stark", textColor = textColor)
+                }
+
+                if (hasAnyPlayableAudio) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                        colors = CardDefaults.cardColors(containerColor = cardColor),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = {
+                                if (isPlaying && playingSingleEventFile == null) {
+                                    mediaPlayer.pause()
+                                    isPlaying = false
+                                } else {
+                                    playOrSeekCombined()
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = if (isPlaying && playingSingleEventFile == null) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Abspielen",
+                                    tint = Color(0xFF4FC3F7)
+                                )
+                            }
+
+                            Text(formatMsTime(if (playingSingleEventFile == null) currentPosMs else 0), color = subTextColor, fontSize = 12.sp)
+
+                            Slider(
+                                value = if (playingSingleEventFile == null) (currentPosMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f) else 0f,
+                                onValueChange = { frac -> playOrSeekCombined(frac) },
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                                colors = SliderDefaults.colors(thumbColor = Color(0xFF4FC3F7), activeTrackColor = Color(0xFF4FC3F7))
+                            )
+
+                            val displayedTotalMs = if (playingSingleEventFile == null && totalDurationMs > 1) totalDurationMs else totalVirtualDurationMs
+                            Text(formatMsTime(displayedTotalMs), color = subTextColor, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }
 
+        // Umschalter zwischen "Überblick" und "Einzelne Spuren"
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(top = 4.dp)
                 .height(42.dp)
                 .clip(RoundedCornerShape(21.dp))
                 .background(cardColor)
@@ -2420,7 +2653,14 @@ fun SessionDetailScreen(
                         color = if (activeSubTab == "tracks") Color(0xFF4FC3F7) else Color.Transparent,
                         shape = RoundedCornerShape(21.dp)
                     )
-                    .clickable { activeSubTab = "tracks" },
+                    .clickable {
+                        // Falls gerade die Gesamtaufnahme lief, beim Wechsel auf Einzelspuren pausieren
+                        if (isPlaying && playingSingleEventFile == null) {
+                            try { mediaPlayer.pause() } catch (_: Exception) {}
+                            isPlaying = false
+                        }
+                        activeSubTab = "tracks"
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Text("Einzelne Spuren (${session.eventFiles.size})", color = textColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -2715,7 +2955,7 @@ fun ScoreGaugeRing(score: Int, textColor: Color, strokeDp: Float, fontSizeSp: In
 }
 
 // ==========================================
-// EINSTELLUNGEN
+// EINSTELLUNGEN (Punkt 2: Token-Dialog über der Tastatur, Punkt 4: Spendenlink, Punkt 5: Speicheroptimierung)
 // ==========================================
 @Composable
 fun SettingsScreen(
@@ -2761,6 +3001,7 @@ fun SettingsScreen(
     onCheckUpdateNow: () -> Unit,
     storageUsedText: String,
     archivedCount: Int,
+    onOptimizeStorage: () -> Unit,
     onDeleteAllSessions: (Boolean) -> Unit,
     textColor: Color,
     subTextColor: Color,
@@ -2771,7 +3012,65 @@ fun SettingsScreen(
     var isTestingMic by remember { mutableStateOf(false) }
     var isCalibratingRoom by remember { mutableStateOf(false) }
     var liveDb by remember { mutableIntStateOf(0) }
-    var showTokenInput by remember { mutableStateOf(false) }
+
+    // Punkt 2: Eigener Dialog für die Token-Eingabe (schwebt immer sichtbar über der Tastatur!)
+    var showTokenDialog by remember { mutableStateOf(false) }
+    var tempTokenText by remember(githubToken) { mutableStateOf(githubToken) }
+    var isTokenVisible by remember { mutableStateOf(false) }
+
+    if (showTokenDialog) {
+        AlertDialog(
+            containerColor = cardColor,
+            titleContentColor = textColor,
+            textContentColor = subTextColor,
+            onDismissRequest = { showTokenDialog = false },
+            title = { Text("GitHub Token eingeben") },
+            text = {
+                Column {
+                    Text(
+                        text = "Trage hier deinen Read-Only Personal Access Token ein, damit Updates auch bei privatem GitHub-Repository geprüft werden können:",
+                        color = subTextColor,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = tempTokenText,
+                        onValueChange = { tempTokenText = it },
+                        label = { Text("Token (github_pat_...)") },
+                        singleLine = true,
+                        visualTransformation = if (isTokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isTokenVisible = !isTokenVisible }) {
+                                Icon(
+                                    imageVector = if (isTokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = "Sichtbarkeit",
+                                    tint = subTextColor
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onGithubTokenChange(tempTokenText.trim())
+                        showTokenDialog = false
+                        Toast.makeText(context, "GitHub Token gespeichert", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4FC3F7))
+                ) {
+                    Text("Speichern", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTokenDialog = false }) {
+                    Text("Abbrechen", color = subTextColor)
+                }
+            }
+        )
+    }
 
     LaunchedEffect(isTestingMic, isCalibratingRoom) {
         if (isTestingMic || isCalibratingRoom) {
@@ -2906,17 +3205,18 @@ fun SettingsScreen(
     val versionInfo = remember {
         try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val vName = pInfo.versionName ?: "0.2.0-alpha"
+            val vName = pInfo.versionName ?: "0.3.0-alpha"
             val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else @Suppress("DEPRECATION") pInfo.versionCode.toLong()
             "v$vName (Build $vCode)"
         } catch (_: Exception) {
-            "v0.2.0-alpha"
+            "v0.3.0-alpha"
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
@@ -3300,7 +3600,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // KATEGORIE 4: Darstellung & Speicher
+        // KATEGORIE 4: Darstellung & Speicher (Punkt 5: Mit Speicher-Optimierer)
         Text("Darstellung & Speicher", color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -3327,14 +3627,26 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text("Belegter Speicherplatz", color = textColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("Davon im geschützten Archiv: $archivedCount Sitzungen", color = subTextColor, fontSize = 12.sp)
+                        Text("Komprimiertes Sprach-Audio aktiv (ca. 85% weniger Speicherbedarf). Im Archiv: $archivedCount Sitzungen.", color = subTextColor, fontSize = 12.sp)
                     }
                     Text(storageUsedText, color = Color(0xFFFFB74D), fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = onOptimizeStorage,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.CleaningServices, contentDescription = null, tint = Color(0xFF4FC3F7))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Speicherplatz optimieren (Duplikate bereinigen)", color = Color(0xFF4FC3F7), fontSize = 13.sp)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedButton(
                     onClick = { deleteDialogStep = 1 },
@@ -3350,8 +3662,8 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // KATEGORIE 5: Info & App-Updates
-        Text("Info & App-Updates", color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+        // KATEGORIE 5: Info, App-Updates & Unterstützen (Punkt 2 & 4)
+        Text("Info, Updates & Unterstützen", color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = cardColor),
@@ -3440,32 +3752,50 @@ fun SettingsScreen(
                     }
 
                     OutlinedButton(
-                        onClick = { showTokenInput = !showTokenInput },
+                        onClick = {
+                            tempTokenText = githubToken
+                            showTokenDialog = true
+                        },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Key, contentDescription = null, tint = subTextColor)
+                        Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = null,
+                            tint = if (githubToken.isNotBlank()) Color(0xFF66BB6A) else subTextColor
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Privat-Repo Token", color = subTextColor, fontSize = 12.sp)
+                        Text(
+                            text = if (githubToken.isNotBlank()) "Token aktiv ✓" else "Privat-Token",
+                            color = if (githubToken.isNotBlank()) Color(0xFF66BB6A) else subTextColor,
+                            fontSize = 12.sp
+                        )
                     }
                 }
 
-                if (showTokenInput) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Hinweis: Ohne Token funktioniert die Update-Prüfung nur, wenn das GitHub-Repository auf 'Public' steht. Für ein privates Repo kannst du hier einen Read-Only Personal Access Token eintragen:",
-                        color = subTextColor,
-                        fontSize = 11.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = githubToken,
-                        onValueChange = onGithubTokenChange,
-                        label = { Text("GitHub Token (optional)") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 14.dp))
+
+                // Punkt 4: Projekt unterstützen / Kaffeekasse (Spendenlink)
+                Text("Gefällt dir Gute Nacht?", color = textColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(
+                    "Die App ist werbefrei. Wenn du die Weiterentwicklung unterstützen möchtest, freue ich mich über einen kleinen Beitrag in die Kaffeekasse:",
+                    color = subTextColor,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+                )
+
+                Button(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, DONATION_URL.toUri())
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB74D))
+                ) {
+                    Icon(Icons.Default.Favorite, contentDescription = null, tint = Color.Black)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Projekt unterstützen (Spendenlink) ☕", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             }
         }

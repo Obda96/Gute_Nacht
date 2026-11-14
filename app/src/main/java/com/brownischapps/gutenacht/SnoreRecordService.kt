@@ -12,9 +12,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaMuxer
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -26,7 +23,6 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import java.io.File
-import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -50,10 +46,6 @@ class SnoreRecordService : Service(), SensorEventListener {
         private const val TICK_INTERVAL_MS = 200L
         private const val TICKS_PER_SECOND = 5
 
-        /**
-         * Punkt 3: Führt den Anti-Schnarch-Impuls aus (identisch für Nachtbetrieb & Simulation in den Einstellungen).
-         * strengthLevel: 1 = Sanft, 2 = Mittel, 3 = Kräftig
-         */
         fun vibrateAntiSnorePattern(context: Context, strengthLevel: Int = 2) {
             try {
                 val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -87,85 +79,6 @@ class SnoreRecordService : Service(), SensorEventListener {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-            }
-        }
-
-        fun mergeAudioFiles(inputFiles: List<File>, outputFile: File) {
-            val validFiles = inputFiles.filter { it.exists() && it.length() > 1024L }
-            if (validFiles.isEmpty()) return
-            if (validFiles.size == 1) {
-                try {
-                    validFiles.first().copyTo(outputFile, overwrite = true)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                return
-            }
-            try {
-                if (outputFile.exists()) outputFile.delete()
-                val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                var audioTrackIndex = -1
-                var muxerStarted = false
-                var timeOffsetUs = 0L
-                val buffer = ByteBuffer.allocate(256 * 1024)
-                val bufferInfo = MediaCodec.BufferInfo()
-
-                for (file in validFiles) {
-                    val extractor = MediaExtractor()
-                    try {
-                        extractor.setDataSource(file.absolutePath)
-                        var trackIndex = -1
-                        for (i in 0 until extractor.trackCount) {
-                            val format = extractor.getTrackFormat(i)
-                            val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
-                            if (mime.startsWith("audio/")) {
-                                trackIndex = i
-                                if (!muxerStarted) {
-                                    audioTrackIndex = muxer.addTrack(format)
-                                    muxer.start()
-                                    muxerStarted = true
-                                }
-                                break
-                            }
-                        }
-
-                        if (trackIndex >= 0 && muxerStarted) {
-                            extractor.selectTrack(trackIndex)
-                            var lastSampleTimeUs = 0L
-                            while (true) {
-                                buffer.clear()
-                                val sampleSize = extractor.readSampleData(buffer, 0)
-                                if (sampleSize < 0) break
-
-                                val sampleTime = extractor.sampleTime
-                                if (sampleTime >= lastSampleTimeUs) {
-                                    bufferInfo.offset = 0
-                                    bufferInfo.size = sampleSize
-                                    bufferInfo.presentationTimeUs = timeOffsetUs + sampleTime
-                                    bufferInfo.flags = extractor.sampleFlags
-                                    muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
-                                    lastSampleTimeUs = sampleTime
-                                }
-                                extractor.advance()
-                            }
-                            timeOffsetUs += lastSampleTimeUs + 50_000L
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    } finally {
-                        try { extractor.release() } catch (_: Exception) {}
-                    }
-                }
-
-                if (muxerStarted) {
-                    try { muxer.stop() } catch (_: Exception) {}
-                }
-                try { muxer.release() } catch (_: Exception) {}
-            } catch (e: Exception) {
-                e.printStackTrace()
-                if (!outputFile.exists() && validFiles.isNotEmpty()) {
-                    try { validFiles.first().copyTo(outputFile, overwrite = true) } catch (_: Exception) {}
-                }
             }
         }
     }
@@ -504,7 +417,7 @@ class SnoreRecordService : Service(), SensorEventListener {
         val file = currentSegmentFile
         val clipSecs = (segmentTicks / TICKS_PER_SECOND).coerceAtLeast(1)
 
-        if (!discardOnly && isEventTriggered && file != null && file.exists() && file.length() > 1024L && clipSecs >= 2) {
+        if (!discardOnly && isEventTriggered && file != null && file.exists() && file.length() > 512L && clipSecs >= 2) {
             eventCounter++
             val num = String.format(Locale.US, "%03d", eventCounter)
             val baseName = "Event_${num}_${currentEventStartTime}_${currentEventMaxDb}dB_${clipSecs}s"
@@ -706,6 +619,10 @@ class SnoreRecordService : Service(), SensorEventListener {
         super.onTaskRemoved(rootIntent)
     }
 
+    /**
+     * Punkt 5: Keine doppelte combined.m4a-Kopie mehr erzeugen!
+     * Spart 50% Speicherplatz und macht das Beenden der Aufnahme am Morgen extrem schnell.
+     */
     private fun finalizeSessionDirectoryAsync() {
         if (isFinalized) return
         isFinalized = true
@@ -745,11 +662,6 @@ class SnoreRecordService : Service(), SensorEventListener {
 
                     val eventFiles = dir.listFiles { f -> f.name.startsWith("Event_") && f.extension == "m4a" }
                         ?.sortedBy { it.name } ?: emptyList()
-
-                    if (eventFiles.isNotEmpty()) {
-                        val combinedFile = File(dir, "combined.m4a")
-                        mergeAudioFiles(eventFiles, combinedFile)
-                    }
 
                     val finalDirName = "Session_${startStr}_${endStr}_T${totalSecs}_S${snoreSecs}_SC${score}"
                     dir.renameTo(File(dir.parentFile, finalDirName))
