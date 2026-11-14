@@ -13,11 +13,10 @@ android {
         applicationId = "com.brownischapps.gutenacht"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionCode = 2
+        versionName = "0.2.0-alpha"
 
-        // Benennt die APK-Datei beim Erstellen automatisch um:
-        setProperty("archivesBaseName", "GuteNacht-v$versionName")
+        base.archivesName.set("GuteNacht-v$versionName")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,8 +39,9 @@ android {
 }
 
 dependencies {
-    implementation("androidx.compose.material:material-icons-extended")
     implementation(platform(libs.androidx.compose.bom))
+    implementation("androidx.compose.runtime:runtime")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)

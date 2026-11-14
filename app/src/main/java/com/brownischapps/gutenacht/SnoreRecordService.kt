@@ -50,6 +50,46 @@ class SnoreRecordService : Service(), SensorEventListener {
         private const val TICK_INTERVAL_MS = 200L
         private const val TICKS_PER_SECOND = 5
 
+        /**
+         * Punkt 3: Führt den Anti-Schnarch-Impuls aus (identisch für Nachtbetrieb & Simulation in den Einstellungen).
+         * strengthLevel: 1 = Sanft, 2 = Mittel, 3 = Kräftig
+         */
+        fun vibrateAntiSnorePattern(context: Context, strengthLevel: Int = 2) {
+            try {
+                val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                    vm.defaultVibrator
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                }
+
+                val timings = when (strengthLevel) {
+                    1 -> longArrayOf(0, 140, 120, 140)
+                    3 -> longArrayOf(0, 320, 140, 380, 140, 380)
+                    else -> longArrayOf(0, 220, 130, 250)
+                }
+                val amplitudes = when (strengthLevel) {
+                    1 -> intArrayOf(0, 95, 0, 115)
+                    3 -> intArrayOf(0, 255, 0, 255, 0, 255)
+                    else -> intArrayOf(0, 175, 0, 200)
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    if (vibrator.hasAmplitudeControl()) {
+                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                    } else {
+                        vibrator.vibrate(VibrationEffect.createWaveform(timings, -1))
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(if (strengthLevel == 3) 600L else 300L)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         fun mergeAudioFiles(inputFiles: List<File>, outputFile: File) {
             val validFiles = inputFiles.filter { it.exists() && it.length() > 1024L }
             if (validFiles.isEmpty()) return
@@ -150,7 +190,6 @@ class SnoreRecordService : Service(), SensorEventListener {
     private var currentSegmentFile: File? = null
     private var isFinalized = false
 
-    // Konfigurierbare Parameter (Optimierte Standards gegen 500 Mini-Clips!)
     private var thresholdDb = 55f
     private var isTestMode = false
     private var delayMinutes = 20
@@ -158,19 +197,17 @@ class SnoreRecordService : Service(), SensorEventListener {
     private var wakeDetectionEnabled = true
     private var maxDurationHours = 10
     private var antiSnorePulseEnabled = false
+    private var antiSnorePulseStrength = 2
 
-    // Benachrichtigungs-Einstellungen
     private var notifyShowLiveCount = true
     private var notifyWakeWithSound = true
     private var notifyMorningSummary = true
 
-    // Echtzeit-Zeitstempel
     private var startWallClockMs = 0L
     private var serviceStartElapsedMs = 0L
     private var recordingStartElapsedMs = 0L
     private var totalDelayMs = 0L
 
-    // Analyse-Zähler (in 0.2s Ticks)
     private var snoreTicks = 0
     private var segmentTicks = 0
     private var silenceTicks = 0
@@ -184,11 +221,9 @@ class SnoreRecordService : Service(), SensorEventListener {
     private var eventCounter = 0
     private var lastNotificationText = ""
 
-    // Diagramm-Daten für die gesamte Nacht UND für die aktuelle Einzelspur (Punkt 2)
     private val chartHistory = mutableListOf<Int>()
     private val currentSegmentBars = mutableListOf<Int>()
 
-    // Sensorik für Aufwach-Erkennung
     private lateinit var sensorManager: SensorManager
     private var accelerometer: Sensor? = null
     private var baseX = 0f
@@ -237,6 +272,7 @@ class SnoreRecordService : Service(), SensorEventListener {
         wakeDetectionEnabled = intent?.getBooleanExtra("WAKE_DETECTION", prefs.getBoolean("wake_detection", true)) ?: prefs.getBoolean("wake_detection", true)
         maxDurationHours = intent?.getIntExtra("MAX_HOURS", prefs.getInt("max_duration_hours", 10)) ?: prefs.getInt("max_duration_hours", 10)
         antiSnorePulseEnabled = prefs.getBoolean("anti_snore_pulse", false)
+        antiSnorePulseStrength = prefs.getInt("anti_snore_strength", 2)
 
         notifyShowLiveCount = prefs.getBoolean("notify_live_count", true)
         notifyWakeWithSound = prefs.getBoolean("notify_wake_sound", true)
@@ -427,23 +463,7 @@ class SnoreRecordService : Service(), SensorEventListener {
         val now = SystemClock.elapsedRealtime()
         if (now - lastAntiSnorePulseMs < 60_000L) return
         lastAntiSnorePulseMs = now
-        try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vm.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 180, 120, 180), -1))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(300)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        vibrateAntiSnorePattern(this, antiSnorePulseStrength)
     }
 
     private fun cancelWakeAlertNotification() {
@@ -479,11 +499,6 @@ class SnoreRecordService : Service(), SensorEventListener {
         recorder?.startRecording(currentSegmentFile!!)
     }
 
-    /**
-     * Speichert eine erkannte Schnarch-Spur inklusive:
-     * - Dauer im Dateinamen (_XXs), damit die UI niemals beim Laden hunderter Dateien einfriert
-     * - Eigener .bars Datei (0.2s Balkendiagramm speziell für diese Einzelaufnahme, Punkt 2!)
-     */
     private fun finalizeCurrentSegment(discardOnly: Boolean = false) {
         recorder?.stopRecording()
         val file = currentSegmentFile
@@ -543,7 +558,6 @@ class SnoreRecordService : Service(), SensorEventListener {
                     return
                 }
 
-                // 1. Einschlafphase prüfen
                 if (isWaitingDelay) {
                     val remainingMs = totalDelayMs - elapsedSinceStartMs
                     if (remainingMs > 0) {
@@ -555,7 +569,7 @@ class SnoreRecordService : Service(), SensorEventListener {
                         )
 
                         segmentTicks++
-                        if (segmentTicks >= 30) { // Alle 6 Sek. im Lausch-Modus erneuern
+                        if (segmentTicks >= 30) {
                             finalizeCurrentSegment(discardOnly = true)
                             startNewSegment()
                         }
@@ -572,7 +586,6 @@ class SnoreRecordService : Service(), SensorEventListener {
                     }
                 }
 
-                // 2. Prüfen, ob das Display eingeschaltet ist und das Handy genutzt wird
                 if (wakeDetectionEnabled && (nowElapsed - recordingStartElapsedMs) > 60_000L) {
                     if (powerManager.isInteractive) {
                         screenInteractiveTicks++
@@ -585,7 +598,6 @@ class SnoreRecordService : Service(), SensorEventListener {
                     }
                 }
 
-                // 3. Live-Messung alle 200ms (0.2 Sekunden)
                 segmentTicks++
                 saveSnapshotTicks++
 
@@ -605,8 +617,6 @@ class SnoreRecordService : Service(), SensorEventListener {
                     silenceTicks = 0
                     loudTicksInCurrentSegment++
 
-                    // Punkt 1 & 3: Entprellung! Erst wenn mindestens 3 Ticks (0.6 Sek.) über dem Schwellenwert
-                    // lagen, wird es als echtes Schnarch-Ereignis gewertet (filtert kurzes Deckenrascheln/Knacken).
                     if (!isEventTriggered && loudTicksInCurrentSegment >= 3) {
                         isEventTriggered = true
                         currentEventStartTime = SimpleDateFormat("dd.MM.yyyy_HH-mm-ss", Locale.getDefault()).format(Date())
@@ -615,7 +625,6 @@ class SnoreRecordService : Service(), SensorEventListener {
                         currentEventMaxDb = currentDb
                     }
 
-                    // Sanfter Anti-Schnarch-Impuls bei starkem Schnarchen (> 70 dB)
                     if (antiSnorePulseEnabled && currentDb >= 70) {
                         loudSnoreStreakTicks++
                         if (loudSnoreStreakTicks >= 15) {
@@ -630,20 +639,17 @@ class SnoreRecordService : Service(), SensorEventListener {
                     loudSnoreStreakTicks = 0
                 }
 
-                // Längere Nachlaufzeit (Standard 8 Sek.) hält zusammenhängende Schnarchphasen in EINER Spur!
                 val silenceLimitTicks = silenceToleranceSecs * TICKS_PER_SECOND
-                val maxSegmentTicks = 90 * TICKS_PER_SECOND // Bis zu 90 Sek. am Stück pro Spur
+                val maxSegmentTicks = 90 * TICKS_PER_SECOND
 
                 if (isEventTriggered && (silenceTicks >= silenceLimitTicks || segmentTicks >= maxSegmentTicks)) {
                     finalizeCurrentSegment(discardOnly = false)
                     startNewSegment()
                     updateNotification(formatActiveStatusText())
                 } else if (!isEventTriggered && segmentTicks >= 30 && loudTicksInCurrentSegment == 0) {
-                    // Bei völliger Stille nach 6 Sekunden (30 Ticks) Puffer leeren
                     finalizeCurrentSegment(discardOnly = true)
                     startNewSegment()
                 } else if (!isEventTriggered && segmentTicks >= 40) {
-                    // Falls nur ein kurzes Einzelgeräusch (< 0.6s) war, nach 8 Sek. verwerfen
                     finalizeCurrentSegment(discardOnly = true)
                     startNewSegment()
                 }
@@ -700,11 +706,6 @@ class SnoreRecordService : Service(), SensorEventListener {
         super.onTaskRemoved(rootIntent)
     }
 
-    /**
-     * Punkt 3: Verhindert den Absturz beim Beenden!
-     * Stoppt den Recorder sofort und lagert das zeitintensive Zusammenfügen vieler Audiodateien
-     * in einen Hintergrund-Thread aus, damit der Main-Thread niemals blockiert.
-     */
     private fun finalizeSessionDirectoryAsync() {
         if (isFinalized) return
         isFinalized = true
@@ -719,7 +720,6 @@ class SnoreRecordService : Service(), SensorEventListener {
         loopRunnable?.let { handler.removeCallbacks(it) }
         cancelWakeAlertNotification()
 
-        // Recorder sofort stoppen
         finalizeCurrentSegment(discardOnly = wasWaitingDelay)
 
         val dir = sessionDir

@@ -22,7 +22,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,11 +31,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -56,16 +57,23 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.ceil
@@ -73,6 +81,9 @@ import kotlin.math.cos
 import kotlin.math.log10
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+const val GITHUB_REPO_URL = "https://github.com/Obda96/Gute_Nacht"
+const val GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/Obda96/Gute_Nacht/releases/latest"
 
 data class SnoreSession(
     val dir: File,
@@ -98,6 +109,102 @@ data class SnoreEventItem(
     val chartPoints: List<Int>
 )
 
+data class GitHubUpdateResult(
+    val isUpdateAvailable: Boolean,
+    val latestTag: String,
+    val releaseName: String,
+    val downloadUrl: String,
+    val statusMessage: String
+)
+
+suspend fun checkGitHubForUpdate(
+    currentVersionName: String,
+    githubToken: String
+): GitHubUpdateResult = withContext(Dispatchers.IO) {
+    try {
+        val url = URL(GITHUB_API_LATEST_RELEASE)
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8000
+            readTimeout = 8000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("User-Agent", "GuteNacht-Android-App")
+            if (githubToken.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer ${githubToken.trim()}")
+            }
+        }
+
+        val code = conn.responseCode
+        if (code == 404) {
+            return@withContext GitHubUpdateResult(
+                isUpdateAvailable = false,
+                latestTag = "",
+                releaseName = "",
+                downloadUrl = GITHUB_REPO_URL,
+                statusMessage = if (githubToken.isBlank()) {
+                    "Repo ist aktuell privat (404). Für öffentliche Update-Prüfung Repo auf 'Public' stellen oder Token hinterlegen."
+                } else {
+                    "Noch kein Release gefunden oder Token ohne Lese-Berechtigung."
+                }
+            )
+        } else if (code != 200) {
+            return@withContext GitHubUpdateResult(
+                isUpdateAvailable = false,
+                latestTag = "",
+                releaseName = "",
+                downloadUrl = GITHUB_REPO_URL,
+                statusMessage = "GitHub-Antwortcode: HTTP $code"
+            )
+        }
+
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val json = JSONObject(body)
+        val tagName = json.optString("tag_name", "").trim()
+        val releaseTitle = json.optString("name", tagName).trim()
+        var htmlOrApkUrl = json.optString("html_url", "$GITHUB_REPO_URL/releases")
+
+        val assets = json.optJSONArray("assets")
+        if (assets != null && assets.length() > 0) {
+            for (i in 0 until assets.length()) {
+                val asset = assets.getJSONObject(i)
+                val browserUrl = asset.optString("browser_download_url", "")
+                if (browserUrl.endsWith(".apk", ignoreCase = true)) {
+                    htmlOrApkUrl = browserUrl
+                    break
+                }
+            }
+        }
+
+        val normalizedCurrent = currentVersionName.lowercase(Locale.ROOT).removePrefix("v").trim()
+        val normalizedLatest = tagName.lowercase(Locale.ROOT).removePrefix("v").trim()
+
+        val hasNewer = normalizedLatest.isNotEmpty() &&
+                !normalizedLatest.contains(normalizedCurrent) &&
+                normalizedLatest != normalizedCurrent
+
+        val timeStr = SimpleDateFormat("dd.MM. HH:mm", Locale.GERMAN).format(Date())
+        GitHubUpdateResult(
+            isUpdateAvailable = hasNewer,
+            latestTag = tagName,
+            releaseName = releaseTitle,
+            downloadUrl = htmlOrApkUrl,
+            statusMessage = if (hasNewer) {
+                "Neue Version verfügbar: $tagName ($timeStr Uhr)"
+            } else {
+                "App ist auf dem neuesten Stand ($timeStr Uhr)"
+            }
+        )
+    } catch (e: Exception) {
+        GitHubUpdateResult(
+            isUpdateAvailable = false,
+            latestTag = "",
+            releaseName = "",
+            downloadUrl = GITHUB_REPO_URL,
+            statusMessage = "Prüfung fehlgeschlagen: ${e.localizedMessage ?: "Keine Verbindung"}"
+        )
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,25 +214,77 @@ class MainActivity : ComponentActivity() {
             var isDarkMode by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", true)) }
             var isTestMode by rememberSaveable { mutableStateOf(prefs.getBoolean("test_mode", false)) }
 
-            // Punkt 1: Neue optimierte Standardwerte (55 dB Schwellenwert & 8 Sek. Nachlaufzeit)
             var threshold by rememberSaveable { mutableFloatStateOf(prefs.getFloat("threshold_v2", 55f)) }
             var sleepDelayMinutes by rememberSaveable { mutableIntStateOf(prefs.getInt("sleep_delay_minutes", 20)) }
             var silenceToleranceSecs by rememberSaveable { mutableIntStateOf(prefs.getInt("silence_tolerance_v2", 8)) }
             var wakeDetectionEnabled by rememberSaveable { mutableStateOf(prefs.getBoolean("wake_detection", true)) }
             var maxDurationHours by rememberSaveable { mutableIntStateOf(prefs.getInt("max_duration_hours", 10)) }
 
-            // Punkt 4: Sanfter Anti-Schnarch-Impuls direkt in der Haupt-App
             var antiSnorePulse by rememberSaveable { mutableStateOf(prefs.getBoolean("anti_snore_pulse", false)) }
+            var antiSnoreStrength by rememberSaveable { mutableIntStateOf(prefs.getInt("anti_snore_strength", 2)) }
 
-            // Benachrichtigungs-Einstellungen
             var notifyShowLiveCount by rememberSaveable { mutableStateOf(prefs.getBoolean("notify_live_count", true)) }
             var notifyWakeWithSound by rememberSaveable { mutableStateOf(prefs.getBoolean("notify_wake_sound", true)) }
             var notifyMorningSummary by rememberSaveable { mutableStateOf(prefs.getBoolean("notify_morning_summary", true)) }
 
-            // Gesten-Einstellungen
             var swipeGesturesEnabled by rememberSaveable { mutableStateOf(prefs.getBoolean("swipe_gestures_enabled", true)) }
             var swapSwipeDirections by rememberSaveable { mutableStateOf(prefs.getBoolean("swap_swipe_directions", false)) }
             var longPressMenuEnabled by rememberSaveable { mutableStateOf(prefs.getBoolean("long_press_menu_enabled", true)) }
+
+            var autoUpdateCheckDaily by rememberSaveable { mutableStateOf(prefs.getBoolean("auto_update_daily", true)) }
+            var githubToken by rememberSaveable { mutableStateOf(prefs.getString("github_token", "") ?: "") }
+            var updateStatusMessage by rememberSaveable {
+                mutableStateOf(prefs.getString("last_update_status", "Noch nicht geprüft") ?: "Noch nicht geprüft")
+            }
+            var latestAvailableVersion by rememberSaveable {
+                mutableStateOf(prefs.getString("latest_available_version", "") ?: "")
+            }
+            var latestDownloadUrl by rememberSaveable {
+                mutableStateOf(prefs.getString("latest_download_url", GITHUB_REPO_URL) ?: GITHUB_REPO_URL)
+            }
+            var isCheckingUpdate by remember { mutableStateOf(false) }
+
+            val currentVersionName = remember {
+                try {
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "0.2.0-alpha"
+                } catch (_: Exception) {
+                    "0.2.0-alpha"
+                }
+            }
+
+            val scope = rememberCoroutineScope()
+
+            fun triggerUpdateCheck(manual: Boolean) {
+                if (isCheckingUpdate) return
+                scope.launch {
+                    isCheckingUpdate = true
+                    if (manual) updateStatusMessage = "Prüfe GitHub-Releases..."
+                    val result = checkGitHubForUpdate(currentVersionName, githubToken)
+                    updateStatusMessage = result.statusMessage
+                    latestAvailableVersion = if (result.isUpdateAvailable) result.latestTag else ""
+                    latestDownloadUrl = result.downloadUrl
+                    prefs.edit {
+                        putLong("last_update_check_ms", System.currentTimeMillis())
+                        putString("last_update_status", result.statusMessage)
+                        putString("latest_available_version", latestAvailableVersion)
+                        putString("latest_download_url", latestDownloadUrl)
+                    }
+                    isCheckingUpdate = false
+                    if (manual) {
+                        Toast.makeText(this@MainActivity, result.statusMessage, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            LaunchedEffect(autoUpdateCheckDaily) {
+                if (autoUpdateCheckDaily) {
+                    val lastCheck = prefs.getLong("last_update_check_ms", 0L)
+                    val oneDayMs = 24 * 60 * 60 * 1000L
+                    if (System.currentTimeMillis() - lastCheck >= oneDayMs) {
+                        triggerUpdateCheck(manual = false)
+                    }
+                }
+            }
 
             val bgColor = if (isDarkMode) Color(0xFF14171F) else Color(0xFFF4F6FA)
             val cardColor = if (isDarkMode) Color(0xFF1E222D) else Color(0xFFFFFFFF)
@@ -145,73 +304,93 @@ class MainActivity : ComponentActivity() {
                         isDarkMode = isDarkMode,
                         onDarkModeChange = {
                             isDarkMode = it
-                            prefs.edit().putBoolean("dark_mode", it).apply()
+                            prefs.edit { putBoolean("dark_mode", it) }
                         },
                         isTestMode = isTestMode,
                         onTestModeChange = {
                             isTestMode = it
-                            prefs.edit().putBoolean("test_mode", it).apply()
+                            prefs.edit { putBoolean("test_mode", it) }
                         },
                         threshold = threshold,
                         onThresholdChange = {
                             threshold = it
-                            prefs.edit().putFloat("threshold_v2", it).apply()
+                            prefs.edit { putFloat("threshold_v2", it) }
                         },
                         sleepDelayMinutes = sleepDelayMinutes,
                         onSleepDelayChange = {
                             sleepDelayMinutes = it
-                            prefs.edit().putInt("sleep_delay_minutes", it).apply()
+                            prefs.edit { putInt("sleep_delay_minutes", it) }
                         },
                         silenceToleranceSecs = silenceToleranceSecs,
                         onSilenceToleranceChange = {
                             silenceToleranceSecs = it
-                            prefs.edit().putInt("silence_tolerance_v2", it).apply()
+                            prefs.edit { putInt("silence_tolerance_v2", it) }
                         },
                         wakeDetectionEnabled = wakeDetectionEnabled,
                         onWakeDetectionChange = {
                             wakeDetectionEnabled = it
-                            prefs.edit().putBoolean("wake_detection", it).apply()
+                            prefs.edit { putBoolean("wake_detection", it) }
                         },
                         maxDurationHours = maxDurationHours,
                         onMaxDurationHoursChange = {
                             maxDurationHours = it
-                            prefs.edit().putInt("max_duration_hours", it).apply()
+                            prefs.edit { putInt("max_duration_hours", it) }
                         },
                         antiSnorePulse = antiSnorePulse,
                         onAntiSnorePulseChange = {
                             antiSnorePulse = it
-                            prefs.edit().putBoolean("anti_snore_pulse", it).apply()
+                            prefs.edit { putBoolean("anti_snore_pulse", it) }
+                        },
+                        antiSnoreStrength = antiSnoreStrength,
+                        onAntiSnoreStrengthChange = {
+                            antiSnoreStrength = it
+                            prefs.edit { putInt("anti_snore_strength", it) }
                         },
                         notifyShowLiveCount = notifyShowLiveCount,
                         onNotifyShowLiveCountChange = {
                             notifyShowLiveCount = it
-                            prefs.edit().putBoolean("notify_live_count", it).apply()
+                            prefs.edit { putBoolean("notify_live_count", it) }
                         },
                         notifyWakeWithSound = notifyWakeWithSound,
                         onNotifyWakeWithSoundChange = {
                             notifyWakeWithSound = it
-                            prefs.edit().putBoolean("notify_wake_sound", it).apply()
+                            prefs.edit { putBoolean("notify_wake_sound", it) }
                         },
                         notifyMorningSummary = notifyMorningSummary,
                         onNotifyMorningSummaryChange = {
                             notifyMorningSummary = it
-                            prefs.edit().putBoolean("notify_morning_summary", it).apply()
+                            prefs.edit { putBoolean("notify_morning_summary", it) }
                         },
                         swipeGesturesEnabled = swipeGesturesEnabled,
                         onSwipeGesturesEnabledChange = {
                             swipeGesturesEnabled = it
-                            prefs.edit().putBoolean("swipe_gestures_enabled", it).apply()
+                            prefs.edit { putBoolean("swipe_gestures_enabled", it) }
                         },
                         swapSwipeDirections = swapSwipeDirections,
                         onSwapSwipeDirectionsChange = {
                             swapSwipeDirections = it
-                            prefs.edit().putBoolean("swap_swipe_directions", it).apply()
+                            prefs.edit { putBoolean("swap_swipe_directions", it) }
                         },
                         longPressMenuEnabled = longPressMenuEnabled,
                         onLongPressMenuEnabledChange = {
                             longPressMenuEnabled = it
-                            prefs.edit().putBoolean("long_press_menu_enabled", it).apply()
+                            prefs.edit { putBoolean("long_press_menu_enabled", it) }
                         },
+                        autoUpdateCheckDaily = autoUpdateCheckDaily,
+                        onAutoUpdateCheckDailyChange = {
+                            autoUpdateCheckDaily = it
+                            prefs.edit { putBoolean("auto_update_daily", it) }
+                        },
+                        githubToken = githubToken,
+                        onGithubTokenChange = {
+                            githubToken = it
+                            prefs.edit { putString("github_token", it) }
+                        },
+                        updateStatusMessage = updateStatusMessage,
+                        latestAvailableVersion = latestAvailableVersion,
+                        latestDownloadUrl = latestDownloadUrl,
+                        isCheckingUpdate = isCheckingUpdate,
+                        onCheckUpdateNow = { triggerUpdateCheck(manual = true) },
                         textColor = textColor,
                         subTextColor = subTextColor,
                         cardColor = cardColor,
@@ -307,7 +486,7 @@ class MainActivity : ComponentActivity() {
                 var endStr = SimpleDateFormat("HH-mm", Locale.getDefault()).format(Date(dir.lastModified()))
                 var totalSecs = 60
                 var snoreSecs = eventFiles.size * 5
-                var score = 0
+                var score = ((snoreSecs.toFloat() / totalSecs.toFloat()) * 100).toInt().coerceIn(0, 100)
 
                 val metaFile = File(dir, "meta.txt")
                 if (metaFile.exists()) {
@@ -372,12 +551,12 @@ class MainActivity : ComponentActivity() {
                     totalSecs = totalSecs,
                     snoreSecs = snoreSecs,
                     score = score,
-                    chartPoints = if (chartPoints.isEmpty()) listOf(10, 15, 10) else chartPoints,
+                    chartPoints = chartPoints.ifEmpty { listOf(10, 15, 10) },
                     combinedAudio = combined,
                     eventFiles = events,
                     isArchived = isArchived
                 )
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             }
         }.sortedByDescending { it.startDate.time }
@@ -508,6 +687,8 @@ fun MainScreen(
     onMaxDurationHoursChange: (Int) -> Unit,
     antiSnorePulse: Boolean,
     onAntiSnorePulseChange: (Boolean) -> Unit,
+    antiSnoreStrength: Int,
+    onAntiSnoreStrengthChange: (Int) -> Unit,
     notifyShowLiveCount: Boolean,
     onNotifyShowLiveCountChange: (Boolean) -> Unit,
     notifyWakeWithSound: Boolean,
@@ -520,6 +701,15 @@ fun MainScreen(
     onSwapSwipeDirectionsChange: (Boolean) -> Unit,
     longPressMenuEnabled: Boolean,
     onLongPressMenuEnabledChange: (Boolean) -> Unit,
+    autoUpdateCheckDaily: Boolean,
+    onAutoUpdateCheckDailyChange: (Boolean) -> Unit,
+    githubToken: String,
+    onGithubTokenChange: (String) -> Unit,
+    updateStatusMessage: String,
+    latestAvailableVersion: String,
+    latestDownloadUrl: String,
+    isCheckingUpdate: Boolean,
+    onCheckUpdateNow: () -> Unit,
     textColor: Color,
     subTextColor: Color,
     cardColor: Color,
@@ -539,9 +729,9 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !pm.isIgnoringBatteryOptimizations(context.packageName)) {
+        if (!pm.isIgnoringBatteryOptimizations(context.packageName)) {
             val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            intent.data = android.net.Uri.parse("package:${context.packageName}")
+            intent.data = "package:${context.packageName}".toUri()
             context.startActivity(intent)
         }
     }
@@ -680,7 +870,17 @@ fun MainScreen(
                     )
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Einstellung") },
+                    icon = {
+                        BadgedBox(
+                            badge = {
+                                if (latestAvailableVersion.isNotBlank()) {
+                                    Badge(containerColor = Color(0xFFFFB74D))
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = "Einstellung")
+                        }
+                    },
                     label = { Text("Einstellung") },
                     selected = currentTab == "settings",
                     onClick = { selectedSession = null; currentTab = "settings" },
@@ -783,6 +983,8 @@ fun MainScreen(
                     onMaxDurationHoursChange = onMaxDurationHoursChange,
                     antiSnorePulse = antiSnorePulse,
                     onAntiSnorePulseChange = onAntiSnorePulseChange,
+                    antiSnoreStrength = antiSnoreStrength,
+                    onAntiSnoreStrengthChange = onAntiSnoreStrengthChange,
                     notifyShowLiveCount = notifyShowLiveCount,
                     onNotifyShowLiveCountChange = onNotifyShowLiveCountChange,
                     notifyWakeWithSound = notifyWakeWithSound,
@@ -795,6 +997,15 @@ fun MainScreen(
                     onSwapSwipeDirectionsChange = onSwapSwipeDirectionsChange,
                     longPressMenuEnabled = longPressMenuEnabled,
                     onLongPressMenuEnabledChange = onLongPressMenuEnabledChange,
+                    autoUpdateCheckDaily = autoUpdateCheckDaily,
+                    onAutoUpdateCheckDailyChange = onAutoUpdateCheckDailyChange,
+                    githubToken = githubToken,
+                    onGithubTokenChange = onGithubTokenChange,
+                    updateStatusMessage = updateStatusMessage,
+                    latestAvailableVersion = latestAvailableVersion,
+                    latestDownloadUrl = latestDownloadUrl,
+                    isCheckingUpdate = isCheckingUpdate,
+                    onCheckUpdateNow = onCheckUpdateNow,
                     storageUsedText = getStorageSizeMb(),
                     archivedCount = sessions.count { it.isArchived },
                     onDeleteAllSessions = { includeArchive ->
@@ -942,7 +1153,7 @@ fun StartRecordScreen(
                             text = if (isCharging) {
                                 "Ladekabel verbunden – optimale Standby-Zuverlässigkeit aktiv."
                             } else {
-                                "Mit dem Mikrofon zu dir auf den Nachttisch legen und bestenfalls ans Ladekabel anschließen."
+                                "Mit dem Mikrofon zu dir auf den Nachttisch legen, bestenfalls am Ladekabel."
                             },
                             color = if (isCharging) Color(0xFF66BB6A) else subTextColor,
                             fontSize = 12.sp
@@ -1145,7 +1356,6 @@ fun SleepingMoonIllustration(modifier: Modifier = Modifier) {
 // ==========================================
 // EREIGNISSE-LISTE
 // ==========================================
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EventsMonthListScreen(
     sessions: List<SnoreSession>,
@@ -1427,7 +1637,6 @@ fun EventsMonthListScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SwipeableSessionRow(
     session: SnoreSession,
@@ -1618,13 +1827,9 @@ fun MiniAudioSparkline(points: List<Int>) {
 }
 
 // ==========================================
-// DETAILANSICHT (Mit 5er-Zeitachse, vertikalen Hilfslinien & Einzelspur-Diagrammen)
+// DETAILANSICHT
 // ==========================================
 
-/**
- * Berechnet 5 gleichmäßig verteilte Uhrzeiten (Start, 25%, 50%, 75%, Ende)
- * sowie optional die exakte Uhrzeit für die aktuelle Abspielposition.
- */
 fun calculateSessionTimeLabels(startTimeStr: String, endTimeStr: String, totalSecs: Int): List<String> {
     return try {
         val startParts = startTimeStr.split(":")
@@ -1632,7 +1837,6 @@ fun calculateSessionTimeLabels(startTimeStr: String, endTimeStr: String, totalSe
         val startMins = (startParts[0].toInt() * 60) + startParts[1].toInt()
         var endMins = (endParts[0].toInt() * 60) + endParts[1].toInt()
 
-        // Falls über Mitternacht geschlafen wurde (z.B. 23:30 bis 07:00)
         if (endMins < startMins) {
             endMins += 24 * 60
         }
@@ -1649,7 +1853,7 @@ fun calculateSessionTimeLabels(startTimeStr: String, endTimeStr: String, totalSe
             val m = totalM % 60
             String.format(Locale.getDefault(), "%02d:%02d", h, m)
         }
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         listOf(startTimeStr, "", "", "", endTimeStr)
     }
 }
@@ -1667,7 +1871,7 @@ fun calculateTimeAtFraction(startTimeStr: String, endTimeStr: String, totalSecs:
         val h = totalM / 60
         val m = totalM % 60
         String.format(Locale.getDefault(), "%02d:%02d Uhr", h, m)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         ""
     }
 }
@@ -1688,12 +1892,11 @@ fun SessionDetailScreen(
     BackHandler { onBack() }
 
     val headerDateFormat = remember { SimpleDateFormat("EEEE dd MMM.", Locale.GERMAN) }
-    val titleDate = remember(session) {
+    val titleDate = remember(session.startDate) {
         headerDateFormat.format(session.startDate).replaceFirstChar { it.uppercase() }
     }
 
-    // 5 Uhrzeiten für die Zeitachse über dem Hauptdiagramm
-    val timeAxisLabels = remember(session) {
+    val timeAxisLabels = remember(session.startTimeStr, session.endTimeStr, session.totalSecs) {
         calculateSessionTimeLabels(session.startTimeStr, session.endTimeStr, session.totalSecs)
     }
 
@@ -1701,6 +1904,8 @@ fun SessionDetailScreen(
     var trackSortOrder by rememberSaveable { mutableStateOf("time") }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var singleEventToDelete by remember { mutableStateOf<SnoreEventItem?>(null) }
+
+    val tracksListState = rememberLazyListState()
 
     val mediaPlayer = remember { MediaPlayer() }
     var isPrepared by remember { mutableStateOf(false) }
@@ -1710,6 +1915,123 @@ fun SessionDetailScreen(
 
     var playingSingleEventFile by remember { mutableStateOf<File?>(null) }
     val audioToPlay = session.combinedAudio ?: session.eventFiles.firstOrNull()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                if (mediaPlayer.isPlaying) mediaPlayer.stop()
+            } catch (_: Exception) {}
+            try {
+                mediaPlayer.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(audioToPlay?.absolutePath) {
+        if (playingSingleEventFile == null && !isPlaying && audioToPlay != null && audioToPlay.exists()) {
+            try {
+                mediaPlayer.reset()
+                mediaPlayer.setDataSource(audioToPlay.absolutePath)
+                mediaPlayer.prepare()
+                totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
+                isPrepared = true
+                mediaPlayer.setOnCompletionListener {
+                    isPlaying = false
+                    currentPosMs = 0
+                    playingSingleEventFile = null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying) {
+        while (isPlaying) {
+            currentPosMs = try { mediaPlayer.currentPosition } catch (_: Exception) { 0 }
+            delay(50)
+        }
+    }
+
+    fun prepareAndAttachCompletionListener(file: File): Boolean {
+        if (!file.exists()) return false
+        return try {
+            mediaPlayer.reset()
+            mediaPlayer.setDataSource(file.absolutePath)
+            mediaPlayer.prepare()
+            totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
+            isPrepared = true
+            mediaPlayer.setOnCompletionListener {
+                isPlaying = false
+                currentPosMs = 0
+                playingSingleEventFile = null
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun playOrSeekCombined(targetFraction: Float? = null) {
+        val mainAudio = session.combinedAudio ?: session.eventFiles.firstOrNull() ?: return
+        if (!mainAudio.exists()) return
+        try {
+            if (playingSingleEventFile != null || !isPrepared) {
+                if (!prepareAndAttachCompletionListener(mainAudio)) return
+                playingSingleEventFile = null
+            }
+
+            if (targetFraction != null) {
+                val targetMs = (targetFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
+                mediaPlayer.seekTo(targetMs)
+                currentPosMs = targetMs
+            }
+            if (!mediaPlayer.isPlaying) {
+                mediaPlayer.start()
+                isPlaying = true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun toggleOrSeekSingleEvent(file: File, seekFraction: Float? = null) {
+        if (!file.exists()) return
+        try {
+            if (playingSingleEventFile == file && isPrepared) {
+                if (seekFraction != null) {
+                    val targetMs = (seekFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
+                    mediaPlayer.seekTo(targetMs)
+                    currentPosMs = targetMs
+                    if (!mediaPlayer.isPlaying) {
+                        mediaPlayer.start()
+                        isPlaying = true
+                    }
+                } else if (isPlaying) {
+                    mediaPlayer.pause()
+                    isPlaying = false
+                } else {
+                    mediaPlayer.start()
+                    isPlaying = true
+                }
+            } else {
+                if (!prepareAndAttachCompletionListener(file)) return
+                playingSingleEventFile = file
+                if (seekFraction != null) {
+                    val targetMs = (seekFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
+                    mediaPlayer.seekTo(targetMs)
+                    currentPosMs = targetMs
+                } else {
+                    currentPosMs = 0
+                }
+                mediaPlayer.start()
+                isPlaying = true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     if (showDeleteConfirm) {
         if (session.isArchived) {
@@ -1766,8 +2088,11 @@ fun SessionDetailScreen(
                 Button(
                     onClick = {
                         if (playingSingleEventFile == target.file) {
-                            try { mediaPlayer.stop() } catch (_: Exception) {}
+                            try { if (mediaPlayer.isPlaying) mediaPlayer.stop() } catch (_: Exception) {}
+                            try { mediaPlayer.reset() } catch (_: Exception) {}
                             isPlaying = false
+                            isPrepared = false
+                            currentPosMs = 0
                             playingSingleEventFile = null
                         }
                         singleEventToDelete = null
@@ -1782,103 +2107,6 @@ fun SessionDetailScreen(
                 }
             }
         )
-    }
-
-    DisposableEffect(session) {
-        if (audioToPlay != null && audioToPlay.exists()) {
-            try {
-                mediaPlayer.setDataSource(audioToPlay.absolutePath)
-                mediaPlayer.prepare()
-                totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
-                isPrepared = true
-                mediaPlayer.setOnCompletionListener {
-                    isPlaying = false
-                    currentPosMs = 0
-                    playingSingleEventFile = null
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        onDispose {
-            try {
-                if (mediaPlayer.isPlaying) mediaPlayer.stop()
-                mediaPlayer.release()
-            } catch (e: Exception) {}
-        }
-    }
-
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            currentPosMs = mediaPlayer.currentPosition
-            delay(50)
-        }
-    }
-
-    fun playOrSeekCombined(targetFraction: Float? = null) {
-        if (audioToPlay == null || !audioToPlay.exists()) return
-        try {
-            if (playingSingleEventFile != null) {
-                mediaPlayer.reset()
-                mediaPlayer.setDataSource(audioToPlay.absolutePath)
-                mediaPlayer.prepare()
-                totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
-                playingSingleEventFile = null
-                isPrepared = true
-            }
-            if (!isPrepared) return
-
-            if (targetFraction != null) {
-                val targetMs = (targetFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
-                mediaPlayer.seekTo(targetMs)
-                currentPosMs = targetMs
-            }
-            if (!mediaPlayer.isPlaying) {
-                mediaPlayer.start()
-                isPlaying = true
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    fun toggleOrSeekSingleEvent(file: File, seekFraction: Float? = null) {
-        try {
-            if (playingSingleEventFile == file) {
-                if (seekFraction != null) {
-                    val targetMs = (seekFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
-                    mediaPlayer.seekTo(targetMs)
-                    currentPosMs = targetMs
-                    if (!mediaPlayer.isPlaying) {
-                        mediaPlayer.start()
-                        isPlaying = true
-                    }
-                } else if (isPlaying) {
-                    mediaPlayer.pause()
-                    isPlaying = false
-                } else {
-                    mediaPlayer.start()
-                    isPlaying = true
-                }
-            } else {
-                mediaPlayer.reset()
-                mediaPlayer.setDataSource(file.absolutePath)
-                mediaPlayer.prepare()
-                totalDurationMs = mediaPlayer.duration.coerceAtLeast(1)
-                playingSingleEventFile = file
-                if (seekFraction != null) {
-                    val targetMs = (seekFraction.coerceIn(0f, 1f) * totalDurationMs).toInt()
-                    mediaPlayer.seekTo(targetMs)
-                    currentPosMs = targetMs
-                } else {
-                    currentPosMs = 0
-                }
-                mediaPlayer.start()
-                isPlaying = true
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
     }
 
     fun formatDurationClean(seconds: Int): String {
@@ -1899,7 +2127,7 @@ fun SessionDetailScreen(
         return String.format(Locale.getDefault(), "%02d:%02d", m, s)
     }
 
-    val eventItems by produceState(initialValue = emptyList<SnoreEventItem>(), session) {
+    val eventItems by produceState(initialValue = emptyList(), session.eventFiles) {
         value = withContext(Dispatchers.IO) {
             val totalEvents = session.eventFiles.size.coerceAtLeast(1)
             session.eventFiles.mapIndexed { index, file ->
@@ -1938,7 +2166,7 @@ fun SessionDetailScreen(
                     db = dbVal,
                     durationSecs = secs,
                     durationStr = durStr,
-                    chartPoints = if (barPoints.isEmpty()) listOf(dbVal) else barPoints
+                    chartPoints = barPoints.ifEmpty { listOf(dbVal) }
                 )
             }
         }
@@ -1952,6 +2180,10 @@ fun SessionDetailScreen(
         }
     }
 
+    LaunchedEffect(trackSortOrder) {
+        tracksListState.scrollToItem(0)
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(horizontal = 20.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
@@ -1959,7 +2191,7 @@ fun SessionDetailScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Zurück", tint = Color(0xFF4FC3F7))
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück", tint = Color(0xFF4FC3F7))
             }
             Column(
                 modifier = Modifier.weight(1f),
@@ -1998,7 +2230,6 @@ fun SessionDetailScreen(
             }
         }
 
-        // 5er-Uhrzeitachse direkt über dem Hauptdiagramm (0%, 25%, 50%, 75%, 100%)
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2019,13 +2250,13 @@ fun SessionDetailScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(165.dp)
-                .pointerInput(session) {
+                .pointerInput(session.dir.absolutePath) {
                     detectTapGestures { offset ->
                         val frac = (offset.x / size.width).coerceIn(0f, 1f)
                         playOrSeekCombined(frac)
                     }
                 }
-                .pointerInput(session) {
+                .pointerInput(session.dir.absolutePath) {
                     detectHorizontalDragGestures { change, _ ->
                         change.consume()
                         val frac = (change.position.x / size.width).coerceIn(0f, 1f)
@@ -2036,7 +2267,6 @@ fun SessionDetailScreen(
             val rawPoints = session.chartPoints
 
             Canvas(modifier = Modifier.fillMaxSize()) {
-                // Horizontale Hilfslinien
                 for (i in 1..3) {
                     val y = size.height * (i / 4f)
                     drawLine(
@@ -2047,7 +2277,6 @@ fun SessionDetailScreen(
                     )
                 }
 
-                // Vertikale Hilfslinien passend zu den Zwischen-Uhrzeiten (25%, 50%, 75%)
                 for (i in 1..3) {
                     val x = size.width * (i / 4f)
                     drawLine(
@@ -2266,6 +2495,7 @@ fun SessionDetailScreen(
                 }
 
                 LazyColumn(
+                    state = tracksListState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 20.dp)
@@ -2347,9 +2577,6 @@ fun SessionDetailScreen(
     }
 }
 
-/**
- * Punkt 2: Balkendiagramm für eine einzelne Schnarch-Spur (0.2s Auflösung)
- */
 @Composable
 fun SingleTrackBarChart(
     points: List<Int>,
@@ -2488,7 +2715,7 @@ fun ScoreGaugeRing(score: Int, textColor: Color, strokeDp: Float, fontSizeSp: In
 }
 
 // ==========================================
-// EINSTELLUNGEN (Punkt 4: Ohne Beta-Ballast, mit Anti-Schnarch-Impuls & Raum-Kalibrierung)
+// EINSTELLUNGEN
 // ==========================================
 @Composable
 fun SettingsScreen(
@@ -2509,6 +2736,8 @@ fun SettingsScreen(
     onMaxDurationHoursChange: (Int) -> Unit,
     antiSnorePulse: Boolean,
     onAntiSnorePulseChange: (Boolean) -> Unit,
+    antiSnoreStrength: Int,
+    onAntiSnoreStrengthChange: (Int) -> Unit,
     notifyShowLiveCount: Boolean,
     onNotifyShowLiveCountChange: (Boolean) -> Unit,
     notifyWakeWithSound: Boolean,
@@ -2521,6 +2750,15 @@ fun SettingsScreen(
     onSwapSwipeDirectionsChange: (Boolean) -> Unit,
     longPressMenuEnabled: Boolean,
     onLongPressMenuEnabledChange: (Boolean) -> Unit,
+    autoUpdateCheckDaily: Boolean,
+    onAutoUpdateCheckDailyChange: (Boolean) -> Unit,
+    githubToken: String,
+    onGithubTokenChange: (String) -> Unit,
+    updateStatusMessage: String,
+    latestAvailableVersion: String,
+    latestDownloadUrl: String,
+    isCheckingUpdate: Boolean,
+    onCheckUpdateNow: () -> Unit,
     storageUsedText: String,
     archivedCount: Int,
     onDeleteAllSessions: (Boolean) -> Unit,
@@ -2533,6 +2771,7 @@ fun SettingsScreen(
     var isTestingMic by remember { mutableStateOf(false) }
     var isCalibratingRoom by remember { mutableStateOf(false) }
     var liveDb by remember { mutableIntStateOf(0) }
+    var showTokenInput by remember { mutableStateOf(false) }
 
     LaunchedEffect(isTestingMic, isCalibratingRoom) {
         if (isTestingMic || isCalibratingRoom) {
@@ -2549,7 +2788,7 @@ fun SettingsScreen(
                 }
                 if (isCalibratingRoom) {
                     val samples = mutableListOf<Int>()
-                    repeat(25) { // 25 * 200ms = 5 Sekunden Raum-Kalibrierung
+                    repeat(25) {
                         val amp = recorder.maxAmplitude
                         val db = if (amp > 0) (20 * log10(amp.toDouble())).toInt().coerceAtLeast(0) else 0
                         liveDb = db
@@ -2664,6 +2903,17 @@ fun SettingsScreen(
         )
     }
 
+    val versionInfo = remember {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val vName = pInfo.versionName ?: "0.2.0-alpha"
+            val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else @Suppress("DEPRECATION") pInfo.versionCode.toLong()
+            "v$vName (Build $vCode)"
+        } catch (_: Exception) {
+            "v0.2.0-alpha"
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -2700,7 +2950,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
 
-                // Aufnahme-Schwellenwert (Standard 55 dB)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2786,7 +3035,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
 
-                // Nachlaufzeit (Standard 8 Sek. gegen abgehackte 5s-Aufnahmen!)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2809,7 +3057,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
 
-                // Einschlafzeit
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2832,22 +3079,74 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
 
-                // Punkt 4: Sanfter Anti-Schnarch-Impuls fest in der Hauptapp
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Sanfter Anti-Schnarch-Impuls", color = textColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("Kurze, sanfte Vibration bei anhaltend starkem Schnarchen (> 70 dB), um im Schlaf die Liegeposition zu wechseln.", color = subTextColor, fontSize = 12.sp)
+                        Text("Anti-Schnarch-Impuls (> 70 dB)", color = textColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Vibriert bei anhaltend starkem Schnarchen über 70 dB, damit du im Schlaf die Liegeposition wechselst.", color = subTextColor, fontSize = 12.sp)
                     }
                     Switch(checked = antiSnorePulse, onCheckedChange = onAntiSnorePulseChange)
                 }
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Intensität:", color = subTextColor, fontSize = 12.sp)
+                    FilterChip(
+                        selected = antiSnoreStrength == 1,
+                        onClick = {
+                            onAntiSnoreStrengthChange(1)
+                            SnoreRecordService.vibrateAntiSnorePattern(context, 1)
+                        },
+                        label = { Text("Sanft", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = antiSnoreStrength == 2,
+                        onClick = {
+                            onAntiSnoreStrengthChange(2)
+                            SnoreRecordService.vibrateAntiSnorePattern(context, 2)
+                        },
+                        label = { Text("Mittel", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = antiSnoreStrength == 3,
+                        onClick = {
+                            onAntiSnoreStrengthChange(3)
+                            SnoreRecordService.vibrateAntiSnorePattern(context, 3)
+                        },
+                        label = { Text("Kräftig", fontSize = 12.sp) }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        SnoreRecordService.vibrateAntiSnorePattern(context, antiSnoreStrength)
+                        val label = when (antiSnoreStrength) {
+                            1 -> "Sanft"
+                            3 -> "Kräftig"
+                            else -> "Mittel"
+                        }
+                        Toast.makeText(context, "Simuliere >70 dB Impuls (Stufe: $label)", Toast.LENGTH_SHORT).show()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Vibration, contentDescription = null, tint = Color(0xFFFFB74D))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Vibration ab 70 dB jetzt simulieren", color = Color(0xFFFFB74D))
+                }
+
                 HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
 
-                // Max Dauer
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -3051,17 +3350,127 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Offizielle Versionsanzeige aus dem Android-Paketmanager
-        val versionInfo = remember {
-            try {
-                val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                val vName = pInfo.versionName ?: "0.1.0-alpha"
-                val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else @Suppress("DEPRECATION") pInfo.versionCode.toLong()
-                "v$vName (Build $vCode)"
-            } catch (e: Exception) {
-                "v0.1.0-alpha"
+        // KATEGORIE 5: Info & App-Updates
+        Text("Info & App-Updates", color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = cardColor),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Installierte Version", color = textColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(versionInfo, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+
+                HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
+
+                Text("GitHub-Repository", color = textColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(
+                    text = GITHUB_REPO_URL,
+                    color = Color(0xFF4FC3F7),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .clickable {
+                            val intent = Intent(Intent.ACTION_VIEW, GITHUB_REPO_URL.toUri())
+                            context.startActivity(intent)
+                        }
+                )
+
+                HorizontalDivider(color = subTextColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Täglich nach Updates suchen", color = textColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("Prüft automatisch einmal pro Tag auf GitHub, ob eine neue APK-Version vorliegt.", color = subTextColor, fontSize = 12.sp)
+                    }
+                    Switch(checked = autoUpdateCheckDaily, onCheckedChange = onAutoUpdateCheckDailyChange)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Status: $updateStatusMessage",
+                    color = if (latestAvailableVersion.isNotBlank()) Color(0xFFFFB74D) else subTextColor,
+                    fontSize = 12.sp,
+                    fontWeight = if (latestAvailableVersion.isNotBlank()) FontWeight.Bold else FontWeight.Normal
+                )
+
+                if (latestAvailableVersion.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, latestDownloadUrl.toUri())
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF66BB6A))
+                    ) {
+                        Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = Color.Black)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Update $latestAvailableVersion herunterladen", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onCheckUpdateNow,
+                        enabled = !isCheckingUpdate,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFF4FC3F7))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (isCheckingUpdate) "Prüfe..." else "Jetzt prüfen", color = Color(0xFF4FC3F7), fontSize = 12.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = { showTokenInput = !showTokenInput },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Key, contentDescription = null, tint = subTextColor)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Privat-Repo Token", color = subTextColor, fontSize = 12.sp)
+                    }
+                }
+
+                if (showTokenInput) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Hinweis: Ohne Token funktioniert die Update-Prüfung nur, wenn das GitHub-Repository auf 'Public' steht. Für ein privates Repo kannst du hier einen Read-Only Personal Access Token eintragen:",
+                        color = subTextColor,
+                        fontSize = 11.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = githubToken,
+                        onValueChange = onGithubTokenChange,
+                        label = { Text("GitHub Token (optional)") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
 
         Text(
             text = "Gute Nacht • $versionInfo",
